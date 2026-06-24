@@ -798,7 +798,7 @@ function parseToolStreamEvent(payload: unknown): OpenWikiRunEvent | null {
 
     return {
       type: "tool_start",
-      call: `${name}(${formatToolArgs(payload.input)})`,
+      call: `${formatToolCallName(name)}(${formatToolArgs(payload.input)})`,
       id,
       input: payload.input,
       name,
@@ -832,6 +832,10 @@ function parseToolStreamEvent(payload: unknown): OpenWikiRunEvent | null {
   }
 
   return null;
+}
+
+function formatToolCallName(name: string): string {
+  return name === "execute" ? "Execute" : name;
 }
 
 function formatToolArgs(input: unknown): string {

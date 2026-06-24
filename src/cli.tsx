@@ -61,9 +61,13 @@ type RunState =
     };
 
 type RunLogItem = {
+  actionCount?: number;
+  activeToolCallIds?: string[];
   call?: string;
   doneContent?: string;
+  errorCount?: number;
   id: number;
+  latestDoneContent?: string;
   status?: "done" | "error" | "running";
   toolCallId?: string;
   toolName?: string;
@@ -1812,21 +1816,7 @@ function appendRunLogEvent(
   }
 
   if (event.type === "tool_start") {
-    const toolDisplay = createToolDisplay(event);
-
-    return [
-      ...log,
-      {
-        call: toolDisplay.showDetail ? event.call : undefined,
-        content: toolDisplay.running,
-        doneContent: toolDisplay.done,
-        id: nextLogId.current++,
-        status: "running",
-        toolCallId: event.id,
-        toolName: event.name,
-        type: "tool",
-      },
-    ];
+    return appendToolStartLogItem(log, event, nextLogId);
   }
 
   if (event.type === "tool_end") {
@@ -1854,6 +1844,60 @@ function appendRunLogEvent(
   return nextLog;
 }
 
+function appendToolStartLogItem(
+  log: RunLogItem[],
+  event: Extract<OpenWikiRunEvent, { type: "tool_start" }>,
+  nextLogId: React.MutableRefObject<number>,
+): RunLogItem[] {
+  const toolDisplay = createToolDisplay(event);
+  const nextLog = [...log];
+  const previous = nextLog.at(-1);
+
+  if (previous?.type === "tool") {
+    const actionCount = (previous.actionCount ?? 1) + 1;
+    const errorCount = previous.errorCount ?? 0;
+    const latestDoneContent = toolDisplay.done;
+
+    nextLog[nextLog.length - 1] = {
+      ...previous,
+      actionCount,
+      activeToolCallIds: [...getActiveToolCallIds(previous), event.id],
+      call: toolDisplay.showDetail ? event.call : undefined,
+      content: formatToolGroupRunning(actionCount, toolDisplay.running),
+      doneContent: formatToolGroupDone(
+        actionCount,
+        errorCount,
+        latestDoneContent,
+      ),
+      errorCount,
+      latestDoneContent,
+      status: "running",
+      toolCallId: event.id,
+      toolName: event.name,
+    };
+
+    return nextLog;
+  }
+
+  return [
+    ...log,
+    {
+      actionCount: 1,
+      activeToolCallIds: [event.id],
+      call: toolDisplay.showDetail ? event.call : undefined,
+      content: toolDisplay.running,
+      doneContent: toolDisplay.done,
+      errorCount: 0,
+      id: nextLogId.current++,
+      latestDoneContent: toolDisplay.done,
+      status: "running",
+      toolCallId: event.id,
+      toolName: event.name,
+      type: "tool",
+    },
+  ];
+}
+
 function completeToolLogItem(
   log: RunLogItem[],
   event: Extract<OpenWikiRunEvent, { type: "tool_end" }>,
@@ -1865,18 +1909,51 @@ function completeToolLogItem(
   }
 
   return log.map((item, index) =>
-    index === matchingIndex
-      ? {
-          ...item,
-          call: undefined,
-          content:
-            event.status === "error"
-              ? `${item.doneContent ?? item.content} failed`
-              : (item.doneContent ?? item.content),
-          status: event.status === "error" ? "error" : "done",
-        }
-      : item,
+    index === matchingIndex ? completeToolGroupItem(item, event) : item,
   );
+}
+
+function completeToolGroupItem(
+  item: RunLogItem,
+  event: Extract<OpenWikiRunEvent, { type: "tool_end" }>,
+): RunLogItem {
+  const actionCount = item.actionCount ?? 1;
+  const activeToolCallIds = getActiveToolCallIds(item).filter(
+    (id) => id !== event.id,
+  );
+  const errorCount =
+    (item.errorCount ?? 0) + (event.status === "error" ? 1 : 0);
+  const latestDoneContent = item.latestDoneContent ?? item.doneContent;
+
+  if (activeToolCallIds.length > 0) {
+    return {
+      ...item,
+      activeToolCallIds,
+      call: undefined,
+      content: formatToolGroupRunning(actionCount, null),
+      doneContent: formatToolGroupDone(
+        actionCount,
+        errorCount,
+        latestDoneContent,
+      ),
+      errorCount,
+      status: "running",
+    };
+  }
+
+  return {
+    ...item,
+    activeToolCallIds,
+    call: undefined,
+    content: formatToolGroupDone(actionCount, errorCount, latestDoneContent),
+    doneContent: formatToolGroupDone(
+      actionCount,
+      errorCount,
+      latestDoneContent,
+    ),
+    errorCount,
+    status: errorCount > 0 ? "error" : "done",
+  };
 }
 
 function findLastToolLogItemIndex(
@@ -1889,13 +1966,60 @@ function findLastToolLogItemIndex(
     if (
       item.type === "tool" &&
       item.status === "running" &&
-      item.toolCallId === toolCallId
+      getActiveToolCallIds(item).includes(toolCallId)
     ) {
       return index;
     }
   }
 
   return -1;
+}
+
+function getActiveToolCallIds(item: RunLogItem): string[] {
+  if (item.activeToolCallIds) {
+    return item.activeToolCallIds;
+  }
+
+  if (item.status === "running" && item.toolCallId) {
+    return [item.toolCallId];
+  }
+
+  return [];
+}
+
+function formatToolGroupRunning(
+  actionCount: number,
+  currentAction: string | null,
+): string {
+  if (actionCount <= 1) {
+    return currentAction ?? "Running 1 action";
+  }
+
+  if (currentAction) {
+    return `Running ${formatCount(actionCount, "action", "actions")}: ${currentAction}`;
+  }
+
+  return `Running ${formatCount(actionCount, "action", "actions")}`;
+}
+
+function formatToolGroupDone(
+  actionCount: number,
+  errorCount: number,
+  latestDoneContent?: string,
+): string {
+  if (actionCount <= 1 && errorCount === 0) {
+    return latestDoneContent ?? "Ran 1 action";
+  }
+
+  if (errorCount > 0) {
+    return `Ran ${formatCount(actionCount, "action", "actions")} with ${formatCount(
+      errorCount,
+      "failure",
+      "failures",
+    )}`;
+  }
+
+  return `Ran ${formatCount(actionCount, "action", "actions")}`;
 }
 
 type ToolDisplay = {
@@ -1943,6 +2067,24 @@ function createToolDisplay(
           `Updated ${formatCount(count, "file", "files")}`,
           `Applied changes to ${formatCount(count, "file", "files")}`,
         ],
+        false,
+      );
+    }
+    case "write_file": {
+      const count = countToolTargets(input, ["path", "paths", "file", "files"]);
+      return pickToolDisplay(
+        variantIndex,
+        [
+          `Writing ${formatCount(count, "file", "files")}`,
+          `Creating ${formatCount(count, "file", "files")}`,
+          `Saving ${formatCount(count, "file", "files")}`,
+        ],
+        [
+          `Wrote ${formatCount(count, "file", "files")}`,
+          `Created ${formatCount(count, "file", "files")}`,
+          `Saved ${formatCount(count, "file", "files")}`,
+        ],
+        false,
       );
     }
     case "ls":
@@ -2025,13 +2167,14 @@ function pickToolDisplay(
   variantIndex: number,
   running: string[],
   done: string[],
+  showDetail = true,
 ): ToolDisplay {
   const index = variantIndex % Math.min(running.length, done.length);
 
   return {
     done: done[index],
     running: running[index],
-    showDetail: true,
+    showDetail,
   };
 }
 
