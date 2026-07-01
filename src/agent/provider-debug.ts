@@ -185,28 +185,50 @@ export function isProviderLlmFetchInput(
     return false;
   }
 
-  if (url.includes("/chat/completions") || url.includes("/responses")) {
-    if (url.startsWith(OPENROUTER_BASE_URL)) {
-      return true;
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return false;
+  }
+
+  const pathname = parsedUrl.pathname;
+  const hostname = parsedUrl.hostname;
+  const isChatOrResponsesPath =
+    pathname.includes("/chat/completions") || pathname.includes("/responses");
+
+  if (isChatOrResponsesPath) {
+    let openRouterHostname: string | null = null;
+    try {
+      openRouterHostname = new URL(OPENROUTER_BASE_URL).hostname;
+    } catch {
+      openRouterHostname = null;
     }
 
     if (
-      url.includes("api.openai.com") ||
-      url.includes("gateway.smith.langchain.com") ||
-      url.includes("smith.langchain.com")
+      (openRouterHostname !== null && hostname === openRouterHostname) ||
+      (openRouterHostname === null && url.startsWith(OPENROUTER_BASE_URL))
     ) {
       return true;
     }
 
     if (
-      url.includes("inference.baseten.co") ||
-      url.includes("api.fireworks.ai")
+      hostname === "api.openai.com" ||
+      hostname === "gateway.smith.langchain.com" ||
+      hostname === "smith.langchain.com"
+    ) {
+      return true;
+    }
+
+    if (
+      hostname === "inference.baseten.co" ||
+      hostname === "api.fireworks.ai"
     ) {
       return true;
     }
   }
 
-  if (url.includes("api.anthropic.com")) {
+  if (hostname === "api.anthropic.com") {
     return true;
   }
 
