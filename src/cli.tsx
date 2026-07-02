@@ -3,6 +3,13 @@ import React, { useEffect, useRef, useState } from "react";
 import { Box, render, Text, useApp, useInput } from "ink";
 import { marked, type Token, type Tokens } from "marked";
 import {
+  configureAuthProvider,
+  listAuthProviderTools,
+  shouldDiscoverToolsAfterAuth,
+} from "./auth/configure.js";
+import { startNgrokTunnel } from "./auth/ngrok.js";
+import { formatAuthProviderList, runOAuthAuth } from "./auth/oauth.js";
+import {
   helpContent,
   isDevelopmentMode,
   parseCommand,
@@ -225,7 +232,13 @@ function App({ command }: AppProps) {
       return;
     }
 
-    if (command.dryRun) {
+    if (command.kind === "auth") {
+      process.exitCode = command.exitCode;
+      app.exit();
+      return;
+    }
+
+    if (command.kind === "run" && command.dryRun) {
       process.exitCode = 0;
       app.exit();
       return;
@@ -1240,10 +1253,16 @@ function ChatInput({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [secretInputMode, setSecretInputMode] =
+    useState<SecretInputMode | null>(null);
   const input = inputState.value;
   const cursorPosition = inputState.cursorPosition;
 
   useEffect(() => {
+    if (secretInputMode !== null) {
+      return;
+    }
+
     setMenuState((currentState) =>
       syncMenuStateForInput(
         input,
@@ -1252,10 +1271,46 @@ function ChatInput({
         currentProvider,
       ),
     );
-  }, [currentModelId, currentProvider, input]);
+  }, [currentModelId, currentProvider, input, secretInputMode]);
 
   useInput((inputValue, key) => {
     if (isSaving) {
+      return;
+    }
+
+    if (secretInputMode !== null) {
+      if (isEscapeInput(inputValue, key)) {
+        resetInput();
+        setSecretInputMode(null);
+        setNotice("Credential update canceled.");
+        return;
+      }
+
+      if (key.return) {
+        void saveSecretInput();
+        return;
+      }
+
+      if (key.backspace || isRawBackspaceInput(inputValue)) {
+        setInputState(deleteBeforeInputCursor);
+        return;
+      }
+
+      if (key.delete) {
+        setInputState(
+          inputValue.length === 0
+            ? deleteBeforeInputCursor
+            : deleteAtInputCursor,
+        );
+        return;
+      }
+
+      if (inputValue && !key.ctrl && !key.meta) {
+        setError(null);
+        setNotice(null);
+        setInputState((state) => applyRawInputValue(state, inputValue));
+      }
+
       return;
     }
 
@@ -1278,7 +1333,7 @@ function ChatInput({
       return;
     }
 
-    if (inputValue === "\u001b" && menuState.kind !== "none") {
+    if (isEscapeInput(inputValue, key) && menuState.kind !== "none") {
       resetInput();
       return;
     }
@@ -1418,6 +1473,47 @@ function ChatInput({
       return;
     }
 
+    if (option.id === "api-key") {
+      if (args && args.length > 0) {
+        setError(
+          "Use the masked prompt for API keys; do not pass keys inline.",
+        );
+        return;
+      }
+
+      setError(null);
+      setNotice(`Paste your ${getProviderLabel(currentProvider)} API key.`);
+      setSecretInputMode({
+        envKey: getProviderApiKeyEnvKey(currentProvider),
+        kind: "api-key",
+        label: `${getProviderLabel(currentProvider)} API key`,
+        provider: currentProvider,
+      });
+      setInputState({ cursorPosition: 0, value: "" });
+      setMenuState({ kind: "none" });
+      return;
+    }
+
+    if (option.id === "langsmith-key") {
+      if (args && args.length > 0) {
+        setError(
+          "Use the masked prompt for LangSmith keys; do not pass keys inline.",
+        );
+        return;
+      }
+
+      setError(null);
+      setNotice("Paste your LangSmith API key, or press Enter empty to clear.");
+      setSecretInputMode({
+        envKey: "LANGSMITH_API_KEY",
+        kind: "langsmith-key",
+        label: "LangSmith API key",
+      });
+      setInputState({ cursorPosition: 0, value: "" });
+      setMenuState({ kind: "none" });
+      return;
+    }
+
     if (option.id === "init" || option.id === "update") {
       resetInput();
       onCommandRun(option.id, args);
@@ -1434,7 +1530,7 @@ function ChatInput({
     if (option.id === "help") {
       resetInput();
       setNotice(
-        "Slash commands: /provider, /model, /init, /update, /clear, /help, /exit. Use arrows to select.",
+        "Slash commands: /provider, /model, /api-key, /langsmith-key, /init, /update, /clear, /help, /exit. Use arrows to select.",
       );
       return;
     }
@@ -1534,6 +1630,49 @@ function ChatInput({
     }
   }
 
+  async function saveSecretInput() {
+    if (secretInputMode === null) {
+      return;
+    }
+
+    const nextValue = input.trim();
+    if (secretInputMode.kind === "api-key" && nextValue.length === 0) {
+      setError(`${secretInputMode.envKey} is required.`);
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      if (secretInputMode.kind === "langsmith-key") {
+        await saveOpenWikiEnv({
+          LANGCHAIN_PROJECT: nextValue.length > 0 ? "openwiki" : "",
+          LANGCHAIN_TRACING_V2: nextValue.length > 0 ? "true" : "false",
+          LANGSMITH_API_KEY: nextValue,
+        });
+      } else {
+        await saveOpenWikiEnv({
+          [secretInputMode.envKey]: nextValue,
+        });
+      }
+
+      const savedLabel = secretInputMode.label;
+      resetInput();
+      setSecretInputMode(null);
+      setNotice(`${savedLabel} saved.`);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to save credential.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   function resetInput() {
     setInputState({ cursorPosition: 0, value: "" });
     setMenuState({ kind: "none" });
@@ -1555,7 +1694,12 @@ function ChatInput({
       <Box borderStyle="single" borderColor="blue" paddingX={1}>
         <Text>
           <Text color="blue">{">"}</Text>{" "}
-          {input.length > 0 ? (
+          {secretInputMode !== null ? (
+            <>
+              <Text color="gray">{secretInputMode.envKey}=</Text>
+              <Text color="yellow">{formatSecretInputSummary(input)}</Text>
+            </>
+          ) : input.length > 0 ? (
             <>
               {beforeCursor}
               <InputCursor />
@@ -1571,11 +1715,24 @@ function ChatInput({
       </Box>
       <Text>
         <Text color="gray">
-          enter to send - / for commands - /exit to quit - cwd{" "}
-          {formatCwd(process.cwd())}
+          {secretInputMode !== null
+            ? "enter to save - esc to cancel - input is masked"
+            : `enter to send - / for commands - /exit to quit - cwd ${formatCwd(
+                process.cwd(),
+              )}`}
         </Text>
       </Text>
-      {menuState.kind !== "none" ? (
+      {secretInputMode !== null ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color="gray">{secretInputMode.label}</Text>
+          <Text>
+            Saving to <Text color="cyan">{secretInputMode.envKey}</Text>
+          </Text>
+          {secretInputMode.kind === "langsmith-key" ? (
+            <Text color="gray">Press Enter empty to clear LangSmith.</Text>
+          ) : null}
+        </Box>
+      ) : menuState.kind !== "none" ? (
         <SlashMenu
           currentModelId={currentModelId}
           currentProvider={currentProvider}
@@ -1595,6 +1752,13 @@ type ChatInputState = {
   value: string;
 };
 
+type SecretInputMode = {
+  envKey: string;
+  kind: "api-key" | "langsmith-key";
+  label: string;
+  provider?: OpenWikiProvider;
+};
+
 type ChatInputMenuState =
   | { kind: "commands"; selectedIndex: number }
   | { kind: "model"; selectedIndex: number }
@@ -1602,10 +1766,12 @@ type ChatInputMenuState =
   | { kind: "none" };
 
 type SlashCommandId =
+  | "api-key"
   | "clear"
   | "exit"
   | "help"
   | "init"
+  | "langsmith-key"
   | "model"
   | "provider"
   | "update";
@@ -1637,6 +1803,16 @@ const slashCommandOptions: SlashCommandOption[] = [
     description: "Switch the current provider model",
     id: "model",
     label: "/model",
+  },
+  {
+    description: "Set the API key for the current provider",
+    id: "api-key",
+    label: "/api-key",
+  },
+  {
+    description: "Set or clear the LangSmith API key",
+    id: "langsmith-key",
+    label: "/langsmith-key",
   },
   {
     description: "Run an initial OpenWiki documentation pass",
@@ -1878,6 +2054,13 @@ function isRawBackspaceInput(inputValue: string): boolean {
   return inputValue === "\u007f" || inputValue === "\b";
 }
 
+function isEscapeInput(
+  inputValue: string,
+  key: Parameters<Parameters<typeof useInput>[0]>[1],
+): boolean {
+  return key.escape || inputValue === "\u001b";
+}
+
 function syncMenuStateForInput(
   input: string,
   currentState: ChatInputMenuState,
@@ -2056,6 +2239,10 @@ function wrapMenuIndex(index: number, itemCount: number): number {
 
 function InputCursor() {
   return <Text color="cyan">|</Text>;
+}
+
+function formatSecretInputSummary(value: string): string {
+  return value.length === 0 ? "[empty]" : `[hidden, ${value.length} chars]`;
 }
 
 function PromptBlock({ message }: { message: string }) {
@@ -3022,19 +3209,120 @@ function Rows({ rows }: RowsProps) {
 const argv = process.argv.slice(2);
 const parsedCommand = parseCommand(argv);
 
-if (parsedCommand.kind === "run" && !parsedCommand.dryRun) {
+if (
+  (parsedCommand.kind === "run" && !parsedCommand.dryRun) ||
+  parsedCommand.kind === "auth" ||
+  parsedCommand.kind === "ngrok"
+) {
   await loadOpenWikiEnv();
 }
 
 const command = resolveStartupCommand(parsedCommand);
 
-if (shouldPrintStartupError(argv, parsedCommand, command)) {
+if (command.kind === "auth") {
+  await runAuthCommand(command);
+} else if (command.kind === "ngrok") {
+  await runNgrokCommand(command);
+} else if (shouldPrintStartupError(argv, parsedCommand, command)) {
   process.stderr.write(`${command.message}\n`);
   process.exitCode = command.exitCode;
 } else if (command.kind === "run" && command.print && !command.dryRun) {
   await runPrintCommand(command);
 } else {
   render(<App command={command} />);
+}
+
+async function runNgrokCommand(
+  command: Extract<CliCommand, { kind: "ngrok" }>,
+): Promise<void> {
+  try {
+    await startNgrokTunnel({
+      port: command.port,
+      url: command.url,
+    });
+    process.exitCode = 0;
+  } catch (error) {
+    process.stderr.write(`${getErrorMessage(error)}\n`);
+    process.exitCode = 1;
+  }
+}
+
+async function runAuthCommand(
+  command: Extract<CliCommand, { kind: "auth" }>,
+): Promise<void> {
+  try {
+    if (command.action === "list") {
+      process.stdout.write(`${formatAuthProviderList()}\n`);
+      process.exitCode = 0;
+      return;
+    }
+
+    if (command.provider === null) {
+      throw new Error("Auth provider is required.");
+    }
+
+    if (command.action === "configure") {
+      const result = await configureAuthProvider(command.provider, {
+        force: command.force,
+      });
+      process.stdout.write(
+        `${result.status === "exists" ? "Config already exists" : `Config ${result.status}`}: ${result.configPath}\n`,
+      );
+      for (const nextStep of result.nextSteps) {
+        process.stdout.write(`- ${nextStep}\n`);
+      }
+      process.exitCode = 0;
+      return;
+    }
+
+    if (command.action === "tools") {
+      const result = await listAuthProviderTools(command.provider);
+      process.stdout.write(
+        `Tools for ${result.provider} (${result.configPath})\n`,
+      );
+      process.stdout.write(`Wrote discovery: ${result.rawFile}\n`);
+      process.stdout.write(`${JSON.stringify(result.tools, null, 2)}\n`);
+      process.exitCode = 0;
+      return;
+    }
+
+    const result = await runOAuthAuth(command.provider);
+    process.stdout.write(
+      `Saved ${result.provider} auth values: ${result.savedEnvKeys.join(", ")}\n`,
+    );
+    const configureResult = await configureAuthProvider(command.provider, {
+      force: command.force,
+    });
+    process.stdout.write(
+      `${configureResult.status === "exists" ? "Config already exists" : `Config ${configureResult.status}`}: ${configureResult.configPath}\n`,
+    );
+    for (const nextStep of configureResult.nextSteps) {
+      process.stdout.write(`- ${nextStep}\n`);
+    }
+
+    if (shouldDiscoverToolsAfterAuth(command.provider)) {
+      try {
+        const toolsResult = await listAuthProviderTools(command.provider);
+        process.stdout.write(
+          `Discovered ${toolsResult.tools.length} MCP tool(s); wrote ${toolsResult.rawFile}\n`,
+        );
+        const toolNames = toolsResult.tools
+          .map((tool) => tool.name)
+          .slice(0, 20);
+        if (toolNames.length > 0) {
+          process.stdout.write(`Tools: ${toolNames.join(", ")}\n`);
+        }
+      } catch (error) {
+        process.stdout.write(
+          `MCP tool discovery skipped: ${getErrorMessage(error)}\n`,
+        );
+      }
+    }
+    process.exitCode = 0;
+  } catch (error) {
+    process.stderr.write(`${getErrorMessage(error)}\n`);
+    process.exitCode = 1;
+  }
 }
 
 function argvRequestsPrint(argv: string[]): boolean {

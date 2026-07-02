@@ -1,5 +1,7 @@
 import { isValidModelId, normalizeModelId } from "./constants.js";
 import type { OpenWikiCommand } from "./agent/types.js";
+import { isAuthProviderId } from "./auth/providers.js";
+import type { AuthProviderId } from "./auth/types.js";
 
 export type HelpRow = {
   label: string;
@@ -18,6 +20,20 @@ export type HelpContent = {
 };
 
 export type CliCommand =
+  | {
+      kind: "auth";
+      action: "configure" | "list" | "oauth" | "tools";
+      exitCode: 0;
+      force: boolean;
+      provider: AuthProviderId | null;
+    }
+  | {
+      kind: "ngrok";
+      action: "start";
+      exitCode: 0;
+      port: number;
+      url: string;
+    }
   | { kind: "help"; exitCode: 0 }
   | {
       kind: "run";
@@ -38,6 +54,121 @@ export type CliCommand =
 export function parseCommand(argv: string[]): CliCommand {
   if (argv[0] === "--help" || argv[0] === "-h") {
     return { kind: "help", exitCode: 0 };
+  }
+
+  if (argv[0] === "auth") {
+    const action =
+      argv[1] === "configure"
+        ? "configure"
+        : argv[1] === "tools"
+          ? "tools"
+          : "oauth";
+    const provider =
+      action === "configure" || action === "tools"
+        ? argv[2]
+        : (argv[1] ?? "list");
+    const optionArgs =
+      action === "configure" || action === "tools"
+        ? argv.slice(3)
+        : argv.slice(2);
+    const unknownOption = optionArgs.find((arg) => arg !== "--force");
+    const force = optionArgs.includes("--force");
+
+    if (unknownOption) {
+      return {
+        kind: "error",
+        exitCode: 1,
+        message: `Unknown option for auth: ${unknownOption}`,
+      };
+    }
+
+    if (provider === "list" && action === "oauth") {
+      return {
+        kind: "auth",
+        action: "list",
+        exitCode: 0,
+        force: false,
+        provider: null,
+      };
+    }
+
+    if (!provider || !isAuthProviderId(provider)) {
+      return {
+        kind: "error",
+        exitCode: 1,
+        message:
+          action === "configure"
+            ? "Usage: openwiki auth configure <provider> [--force]"
+            : action === "tools"
+              ? "Usage: openwiki auth tools <provider>"
+              : `Unknown auth provider: ${provider}`,
+      };
+    }
+
+    return {
+      kind: "auth",
+      action,
+      exitCode: 0,
+      force,
+      provider,
+    };
+  }
+
+  if (argv[0] === "ngrok") {
+    if (argv[1] !== "start" || !argv[2]) {
+      return {
+        kind: "error",
+        exitCode: 1,
+        message: "Usage: openwiki ngrok start <url> [--port <port>]",
+      };
+    }
+
+    let port = 53682;
+    const optionArgs = argv.slice(3);
+    for (let index = 0; index < optionArgs.length; index += 1) {
+      const arg = optionArgs[index];
+
+      if (arg === "--port") {
+        const rawPort = optionArgs[index + 1];
+        if (!rawPort) {
+          return {
+            kind: "error",
+            exitCode: 1,
+            message: "--port requires a value.",
+          };
+        }
+        port = Number(rawPort);
+        index += 1;
+        continue;
+      }
+
+      if (arg.startsWith("--port=")) {
+        port = Number(arg.slice("--port=".length));
+        continue;
+      }
+
+      return {
+        kind: "error",
+        exitCode: 1,
+        message: `Unknown option for ngrok: ${arg}`,
+      };
+    }
+
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+      return {
+        kind: "error",
+        exitCode: 1,
+        message: "--port must be between 1024 and 65535.",
+      };
+    }
+
+    return {
+      kind: "ngrok",
+      action: "start",
+      exitCode: 0,
+      port,
+      url: argv[2],
+    };
   }
 
   let dryRun = false;
@@ -172,17 +303,40 @@ export function isDevelopmentMode(): boolean {
 export const helpContent: HelpContent = {
   title: "OpenWiki",
   description:
-    "Run a documentation agent that generates and maintains a project wiki.",
+    "Run an agent that generates and maintains a project or local knowledge wiki.",
   usage: [
     "openwiki [--modelId <model>]",
     "openwiki [--modelId <model>] [message]",
     "openwiki --init [message]",
     "openwiki --update [message]",
+    "openwiki auth <provider>",
+    "openwiki auth configure <provider> [--force]",
+    "openwiki auth tools <provider>",
+    "openwiki ngrok start <url> [--port <port>]",
   ],
   commands: [
     {
       label: "openwiki",
       description: "Open the interactive OpenWiki chat.",
+    },
+    {
+      label: "openwiki auth <provider>",
+      description:
+        "Authenticate, create connector config, and discover MCP tools when available.",
+    },
+    {
+      label: "openwiki auth configure <provider>",
+      description:
+        "Create local connector config that references saved auth env vars.",
+    },
+    {
+      label: "openwiki auth tools <provider>",
+      description: "List available MCP tools for a configured auth provider.",
+    },
+    {
+      label: "openwiki ngrok start <url>",
+      description:
+        "Start an ngrok tunnel for Slack OAuth and save the OpenWiki redirect URI.",
     },
   ],
   options: [
@@ -192,7 +346,8 @@ export const helpContent: HelpContent = {
     },
     {
       label: "--update",
-      description: "Update existing OpenWiki documentation.",
+      description:
+        "Update existing OpenWiki documentation and ingest configured connectors when relevant.",
     },
     {
       label: "-p, --print",
@@ -217,6 +372,12 @@ export const helpContent: HelpContent = {
     'openwiki -p "Summarize what OpenWiki can do"',
     "openwiki --modelId gpt-5.5",
     'openwiki --update --modelId gpt-5.5 "Please document the API routes first"',
+    'openwiki --update "Refresh the wiki from configured connectors"',
+    "openwiki auth slack",
+    "openwiki auth gmail",
+    "openwiki auth notion",
+    "openwiki auth tools notion",
+    "openwiki ngrok start https://openwiki.ngrok.app",
   ],
   developmentExamples: ["openwiki --dry-run"],
 };

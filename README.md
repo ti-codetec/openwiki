@@ -1,6 +1,6 @@
 # OpenWiki
 
-OpenWiki is a CLI that writes and maintains documentation for your codebase, built specifically for agents.
+OpenWiki is a CLI that writes and maintains documentation for your codebase, built specifically for agents. It can also ingest local knowledge sources through built-in connectors and synthesize them into a local wiki.
 
 ![OpenWiki](https://raw.githubusercontent.com/langchain-ai/openwiki/main/static/openwiki.png)
 
@@ -54,10 +54,35 @@ Update existing documentation:
 openwiki --update
 ```
 
+Run an update that can ingest configured local connectors first:
+
+```sh
+openwiki --update "Refresh the wiki from configured connectors"
+```
+
 Show help:
 
 ```sh
 openwiki --help
+```
+
+In chat, use `/api-key` to update the current provider API key and
+`/langsmith-key` to update or clear LangSmith tracing credentials. Both commands
+use masked prompts.
+
+Authenticate a connector provider:
+
+```sh
+openwiki auth slack
+openwiki auth gmail
+openwiki auth x
+openwiki auth notion
+```
+
+Start an ngrok tunnel for Slack OAuth:
+
+```sh
+openwiki ngrok start https://<your-ngrok-domain>
 ```
 
 `openwiki` creates initial documentation in `openwiki/` when no wiki exists. If `openwiki/` already exists, it refreshes that documentation from repository changes. By default, the CLI stays open after each run so you can send follow-up messages. Use `-p` or `--print` for a one-shot non-interactive run that prints the final assistant output.
@@ -67,6 +92,24 @@ openwiki --help
 On the first interactive run, OpenWiki will have you configure your inference provider, API key, and LLM. You will also be able to set a LangSmith API key to trace your OpenWiki runs to a LangSmith tracing project named "openwiki" (optional).
 
 These configuration options and secrets will be saved to `~/.openwiki/.env` on your local machine.
+
+## Local Connectors
+
+OpenWiki includes built-in connector scaffolding for local Git repositories, Notion, X/Twitter, Google, and Slack. During an `--update` run, the agent can call deterministic connector tools that write raw data and manifests under `~/.openwiki/connectors/<connector>/raw/`, then synthesize the wiki from those local files.
+
+- `git-repo` reads configured local repository paths and writes compact manifests.
+- `x` uses the X API directly with OAuth user-context credentials for home timeline, user posts, mentions, bookmarks, and list posts.
+- `notion` targets the hosted Notion MCP server, so users should authenticate through Notion OAuth instead of pasting a Notion token into OpenWiki.
+- `google` is Gmail-first for now, with room to add Drive, Calendar, and other Google providers later.
+- `slack` uses the Slack API directly with OAuth user-token credentials for self-message search, recent conversation history, DMs, and private channels visible to the user.
+
+Connector secrets are referenced by env var name and stored in `~/.openwiki/.env`; connector config files should never contain raw secret values.
+
+`openwiki auth <provider>` runs a local browser OAuth flow, saves returned tokens into `~/.openwiki/.env`, creates connector config when possible, and discovers MCP tools for MCP-backed providers. Slack and Gmail require app client credentials to already be set in that file; Notion uses dynamic client registration for hosted MCP; X uses OAuth 2.0 with PKCE.
+
+`openwiki auth configure <provider>` and `openwiki auth tools <provider>` are advanced/retry commands for regenerating connector config or inspecting live MCP tools.
+
+See `openwiki/operations/connector-auth.md` for provider setup steps, scopes, redirect URI caveats, and saved env vars.
 
 ## Customizing
 

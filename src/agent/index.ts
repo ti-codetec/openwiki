@@ -6,6 +6,8 @@ import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatOpenRouter } from "@langchain/openrouter";
 import { createDeepAgent, LocalShellBackend } from "deepagents";
+import { createOpenWikiConnectorTools } from "../connectors/tools.js";
+import { ensureWriteConnectorSkill } from "../connectors/write-connector-skill.js";
 import { loadOpenWikiEnv, openWikiEnvDir } from "../env.js";
 import { createSystemPrompt, createUserPrompt } from "./prompt.js";
 import type {
@@ -54,6 +56,7 @@ export async function runOpenWikiAgent(
   emitDebug(options, `env.beforeLoad ${formatEnvironmentDebug()}`);
 
   await loadOpenWikiEnv();
+  await ensureWriteConnectorSkill();
   emitDebug(options, "env=loaded ~/.openwiki/.env");
   emitDebug(options, `env.afterLoad ${formatEnvironmentDebug()}`);
   const provider = resolveConfiguredProvider();
@@ -179,7 +182,7 @@ async function runOpenWikiAgentCore(
   emitDebug(options, `thread=${threadId}`);
   const agent = createDeepAgent({
     model,
-    tools: [],
+    tools: createOpenWikiConnectorTools(),
     checkpointer,
     backend: new LocalShellBackend({
       maxOutputBytes: 100_000,
