@@ -22,6 +22,7 @@ export type ConnectorDefinition = {
 export type ConnectorIngestOptions = {
   limit?: number;
   streams?: string[];
+  windowHours?: number;
 };
 
 export type ConnectorIngestResult = {

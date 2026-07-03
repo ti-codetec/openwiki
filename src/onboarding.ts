@@ -16,13 +16,26 @@ export type OnboardingSourceConfig = {
     description: string;
     expression: string;
     launchAgentPath?: string;
+    pausedAt?: string;
     updatedAt: string;
+    warning?: string;
+  };
+};
+
+export type OpenWikiPowerManagementConfig = {
+  pmset?: {
+    days: string;
+    enabled: boolean;
+    sleepTime: string;
+    updatedAt: string;
+    wakeTime: string;
     warning?: string;
   };
 };
 
 export type OpenWikiOnboardingConfig = {
   completedAt?: string;
+  powerManagement?: OpenWikiPowerManagementConfig;
   sources: Partial<Record<ConnectorId, OnboardingSourceConfig>>;
   templateId?: string;
   templateName?: string;
@@ -117,6 +130,12 @@ function normalizeOnboardingConfig(value: unknown): OpenWikiOnboardingConfig {
     config.templateName = value.templateName;
   }
 
+  if (isObject(value.powerManagement)) {
+    config.powerManagement = normalizePowerManagementConfig(
+      value.powerManagement,
+    );
+  }
+
   for (const [sourceId, sourceValue] of Object.entries(sources)) {
     if (!isKnownConnectorId(sourceId) || !isObject(sourceValue)) {
       continue;
@@ -145,6 +164,10 @@ function normalizeOnboardingConfig(value: unknown): OpenWikiOnboardingConfig {
               typeof sourceValue.schedule.launchAgentPath === "string"
                 ? sourceValue.schedule.launchAgentPath
                 : undefined,
+            pausedAt:
+              typeof sourceValue.schedule.pausedAt === "string"
+                ? sourceValue.schedule.pausedAt
+                : undefined,
             updatedAt:
               typeof sourceValue.schedule.updatedAt === "string"
                 ? sourceValue.schedule.updatedAt
@@ -159,6 +182,34 @@ function normalizeOnboardingConfig(value: unknown): OpenWikiOnboardingConfig {
   }
 
   return config;
+}
+
+function normalizePowerManagementConfig(
+  value: Record<string, unknown>,
+): OpenWikiPowerManagementConfig | undefined {
+  if (!isObject(value.pmset)) {
+    return undefined;
+  }
+
+  return {
+    pmset: {
+      days: typeof value.pmset.days === "string" ? value.pmset.days : "",
+      enabled:
+        typeof value.pmset.enabled === "boolean" ? value.pmset.enabled : false,
+      sleepTime:
+        typeof value.pmset.sleepTime === "string" ? value.pmset.sleepTime : "",
+      updatedAt:
+        typeof value.pmset.updatedAt === "string"
+          ? value.pmset.updatedAt
+          : new Date(0).toISOString(),
+      wakeTime:
+        typeof value.pmset.wakeTime === "string" ? value.pmset.wakeTime : "",
+      warning:
+        typeof value.pmset.warning === "string"
+          ? value.pmset.warning
+          : undefined,
+    },
+  };
 }
 
 function isKnownConnectorId(value: string): value is ConnectorId {

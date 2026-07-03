@@ -126,12 +126,13 @@ async function ingest(
 
   const accessToken = await getGmailAccessToken();
   const messageLimit = getOptionLimit(options.limit, config.maxMessages);
+  const query = getWindowedGmailQuery(config.query, options.windowHours);
   const listResult = await listGmailMessages(accessToken, {
     includeSpamTrash: config.includeSpamTrash,
     labelIds: config.labelIds,
     maxMessages: messageLimit,
     pageSize: config.pageSize,
-    query: config.query,
+    query,
   });
   const format = normalizeGmailFormat(config.format);
   const messages = [];
@@ -159,7 +160,8 @@ async function ingest(
       maxMessages: messageLimit,
       messageCount: messages.length,
       messages,
-      query: getGmailQuery(config.query),
+      query,
+      windowHours: normalizeWindowHours(options.windowHours),
     }),
   );
 
@@ -427,6 +429,31 @@ function getGmailQuery(query: string | undefined): string {
   const normalized = query?.trim();
 
   return normalized && normalized.length > 0 ? normalized : "newer_than:1d";
+}
+
+function getWindowedGmailQuery(
+  query: string | undefined,
+  windowHours: number | undefined,
+): string {
+  const normalizedQuery = getGmailQuery(query);
+  const hours = normalizeWindowHours(windowHours);
+
+  if (
+    hours === null ||
+    /(?:newer|older|after|before):/iu.test(normalizedQuery)
+  ) {
+    return normalizedQuery;
+  }
+
+  return `${normalizedQuery} newer_than:${Math.max(1, Math.ceil(hours / 24))}d`;
+}
+
+function normalizeWindowHours(windowHours: number | undefined): number | null {
+  if (typeof windowHours !== "number" || !Number.isFinite(windowHours)) {
+    return null;
+  }
+
+  return Math.max(1, Math.min(168, Math.trunc(windowHours)));
 }
 
 function normalizeGmailFormat(

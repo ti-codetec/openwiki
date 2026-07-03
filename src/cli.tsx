@@ -33,6 +33,24 @@ import {
   type OpenWikiRunResult,
 } from "./agent/types.js";
 import {
+  runOpenWikiIngestion,
+  type OpenWikiIngestionResult,
+} from "./ingestion.js";
+import {
+  readOpenWikiOnboardingConfig,
+  saveOpenWikiOnboardingConfig,
+} from "./onboarding.js";
+import {
+  deleteConnectorSchedules,
+  getSavedPowerScheduleStatus,
+  listConnectorSchedules,
+  pauseConnectorSchedules,
+  resumeConnectorSchedules,
+  type ConnectorScheduleStatus,
+  type PowerScheduleStatus,
+  type ScheduleMutationResult,
+} from "./schedules.js";
+import {
   ANTHROPIC_API_KEY_ENV_KEY,
   BASETEN_API_KEY_ENV_KEY,
   FIREWORKS_API_KEY_ENV_KEY,
@@ -59,6 +77,17 @@ type RunState =
   | { status: "idle" }
   | { status: "setup-complete-exit"; result: InitSetupResult }
   | { status: "init-setup-saved"; result: InitSetupResult }
+  | {
+      status: "ingestion-running";
+      log: RunLogItem[];
+      credentialDiagnostics?: CredentialDiagnostic[];
+    }
+  | {
+      status: "ingestion-success";
+      result: OpenWikiIngestionResult;
+      log: RunLogItem[];
+      credentialDiagnostics?: CredentialDiagnostic[];
+    }
   | {
       status: "running";
       command: OpenWikiCommand;
@@ -184,6 +213,88 @@ function App({ command }: AppProps) {
     setActiveMessageIsFollowup(false);
     setResolvedCommand(nextCommand);
     setRunState({ status: "idle" });
+  }
+
+  function startIngestionRun(modelId: string | null) {
+    const runId = activeRunId.current + 1;
+    activeRunId.current = runId;
+    activeRunCredentialDiagnostics.current = undefined;
+    activeRunLog.current = [];
+    setResolvedCommand(null);
+    setActiveUserMessage(
+      "Run source-specific OpenWiki ingestion for configured sources.",
+    );
+    setActiveMessageIsFollowup(false);
+    setRunState({
+      status: "ingestion-running",
+      log: [],
+    });
+
+    void runOpenWikiIngestion(process.cwd(), {
+      debug: isDebugMode(),
+      modelId,
+      target: "all",
+      onEvent: (event) => {
+        if (!mountedRef.current || activeRunId.current !== runId) {
+          return;
+        }
+
+        activeRunLog.current = appendRunLogEvent(
+          activeRunLog.current,
+          event,
+          nextLogId,
+        );
+        setRunState((currentState) =>
+          currentState.status === "ingestion-running"
+            ? {
+                ...currentState,
+                log: activeRunLog.current,
+              }
+            : currentState,
+        );
+      },
+    })
+      .then((result) => {
+        if (!mountedRef.current || activeRunId.current !== runId) {
+          return;
+        }
+
+        if (
+          result.results.some((sourceResult) => sourceResult.status === "error")
+        ) {
+          process.exitCode = 1;
+        }
+
+        setRunState({
+          status: "ingestion-success",
+          result,
+          log: activeRunLog.current,
+          credentialDiagnostics: activeRunCredentialDiagnostics.current,
+        });
+      })
+      .catch((error: unknown) => {
+        if (!mountedRef.current || activeRunId.current !== runId) {
+          return;
+        }
+
+        const errorDiagnostics = getErrorDiagnostics(error);
+        const message = getErrorMessage(error);
+
+        void getCredentialDiagnostics()
+          .catch(() => undefined)
+          .then((credentialDiagnostics) => {
+            if (!mountedRef.current || activeRunId.current !== runId) {
+              return;
+            }
+
+            setRunState({
+              status: "error",
+              message,
+              credentialDiagnostics,
+              errorDiagnostics,
+            });
+          });
+      });
   }
 
   function clearSession() {
@@ -400,8 +511,18 @@ function App({ command }: AppProps) {
     if (runState.status === "success" && autoExitOnSuccess) {
       process.exitCode = 0;
       app.exit();
+      return;
     }
-  }, [app, autoExitOnSuccess, runState.status]);
+
+    if (runState.status === "ingestion-success" && autoExitOnSuccess) {
+      process.exitCode = runState.result.results.some(
+        (sourceResult) => sourceResult.status === "error",
+      )
+        ? 1
+        : 0;
+      app.exit();
+    }
+  }, [app, autoExitOnSuccess, runState]);
 
   if (command.kind === "help") {
     return <HelpView />;
@@ -452,11 +573,8 @@ function App({ command }: AppProps) {
           }
 
           if (result.runIngestionNow) {
-            setResolvedCommand("update");
-            setActiveUserMessage(
-              "Run the initial OpenWiki ingestion update from the configured sources.",
-            );
-            setActiveMessageIsFollowup(false);
+            startIngestionRun(result.modelId ?? sessionModelId);
+            return;
           }
 
           setRunState({ status: "init-setup-saved", result });
@@ -523,6 +641,38 @@ function App({ command }: AppProps) {
         <RunView
           command={runState.command}
           credentialDiagnostics={runState.credentialDiagnostics}
+          log={runState.log}
+          message={activeUserMessage}
+          modelId={displayModelId}
+        />
+      </Box>
+    );
+  }
+
+  if (runState.status === "ingestion-running") {
+    return (
+      <Box flexDirection="column">
+        <ChatHistory runs={completedRuns} />
+        <RunView
+          command="update"
+          credentialDiagnostics={runState.credentialDiagnostics}
+          log={runState.log}
+          message={activeUserMessage}
+          modelId={displayModelId}
+        />
+      </Box>
+    );
+  }
+
+  if (runState.status === "ingestion-success") {
+    return (
+      <Box flexDirection="column">
+        <Header modelId={displayModelId} subtitle="Ingestion complete" />
+        <IngestionSummary result={runState.result} />
+        <RunView
+          command="update"
+          credentialDiagnostics={runState.credentialDiagnostics}
+          done
           log={runState.log}
           message={activeUserMessage}
           modelId={displayModelId}
@@ -879,6 +1029,21 @@ function StatusLine({ tone, label, value }: StatusLineProps) {
       </Text>{" "}
       <Text color={tone === "muted" ? "gray" : undefined}>{value}</Text>
     </Text>
+  );
+}
+
+function IngestionSummary({ result }: { result: OpenWikiIngestionResult }) {
+  return (
+    <Panel title="Source Runs">
+      {result.results.map((sourceResult) => (
+        <StatusLine
+          key={sourceResult.connectorId}
+          label={sourceResult.displayName}
+          tone={sourceResult.status === "error" ? "error" : "success"}
+          value={`${sourceResult.status}; ${sourceResult.rawFiles.length} raw file(s)`}
+        />
+      ))}
+    </Panel>
   );
 }
 
@@ -3248,6 +3413,8 @@ const parsedCommand = parseCommand(argv);
 if (
   (parsedCommand.kind === "run" && !parsedCommand.dryRun) ||
   parsedCommand.kind === "auth" ||
+  parsedCommand.kind === "cron" ||
+  parsedCommand.kind === "ingest" ||
   parsedCommand.kind === "ngrok"
 ) {
   await loadOpenWikiEnv();
@@ -3259,6 +3426,10 @@ if (command.kind === "auth") {
   await runAuthCommand(command);
 } else if (command.kind === "ngrok") {
   await runNgrokCommand(command);
+} else if (command.kind === "cron") {
+  await runCronCommand(command);
+} else if (command.kind === "ingest") {
+  await runIngestCommand(command);
 } else if (shouldPrintStartupError(argv, parsedCommand, command)) {
   process.stderr.write(`${command.message}\n`);
   process.exitCode = command.exitCode;
@@ -3279,6 +3450,232 @@ async function runNgrokCommand(
     process.exitCode = 0;
   } catch (error) {
     process.stderr.write(`${getErrorMessage(error)}\n`);
+    process.exitCode = 1;
+  }
+}
+
+async function runCronCommand(
+  command: Extract<CliCommand, { kind: "cron" }>,
+): Promise<void> {
+  try {
+    const config = await readOpenWikiOnboardingConfig();
+
+    if (command.action !== "list") {
+      if (!command.target) {
+        throw new Error(`Target is required for cron ${command.action}.`);
+      }
+
+      const result =
+        command.action === "pause"
+          ? await pauseConnectorSchedules(config, command.target)
+          : command.action === "resume"
+            ? await resumeConnectorSchedules({
+                config,
+                cwd: process.cwd(),
+                target: command.target,
+              })
+            : await deleteConnectorSchedules(config, command.target);
+
+      await saveOpenWikiOnboardingConfig(result.config);
+      process.stdout.write(
+        formatScheduleMutationResult(command.action, result),
+      );
+      await printCronSchedules(result.config);
+      process.exitCode = 0;
+      return;
+    }
+
+    await printCronSchedules(config);
+    process.exitCode = 0;
+  } catch (error) {
+    process.stderr.write(`${getErrorMessage(error)}\n`);
+    process.exitCode = 1;
+  }
+}
+
+async function printCronSchedules(
+  config: Awaited<ReturnType<typeof readOpenWikiOnboardingConfig>>,
+): Promise<void> {
+  const schedules = await listConnectorSchedules(config);
+  const powerSchedule = getSavedPowerScheduleStatus(config);
+
+  process.stdout.write(formatScheduleHeader(schedules.length));
+  process.stdout.write(formatPowerScheduleStatus(powerSchedule));
+
+  if (schedules.length === 0) {
+    process.stdout.write("No connector schedules are configured.\n");
+    return;
+  }
+
+  for (const schedule of schedules) {
+    process.stdout.write(formatScheduleStatus(schedule));
+  }
+}
+
+function formatScheduleMutationResult(
+  action: "delete" | "pause" | "resume",
+  result: ScheduleMutationResult,
+): string {
+  const actionLabel =
+    action === "delete" ? "Deleted" : action === "pause" ? "Paused" : "Resumed";
+  const changed =
+    result.connectorIds.length > 0 ? result.connectorIds.join(", ") : "none";
+  const skipped =
+    result.skippedConnectorIds.length > 0
+      ? result.skippedConnectorIds.join(", ")
+      : "none";
+  const rows = [
+    [`${actionLabel}`, changed],
+    ["Skipped", skipped],
+  ];
+
+  if (result.powerSchedule) {
+    rows.push([
+      "Mac wake",
+      result.powerSchedule.enabled ? "configured" : "not configured",
+    ]);
+  }
+
+  const labelWidth = Math.max(...rows.map(([label]) => label.length));
+  const body = rows
+    .map(([label, value]) => `  ${label.padEnd(labelWidth)} : ${value}`)
+    .join("\n");
+  const warnings =
+    result.warnings.length > 0
+      ? `\n${result.warnings.map((warning) => `  Warning : ${warning}`).join("\n")}`
+      : "";
+
+  return ["", "Cron update", "-----------", body + warnings, ""].join("\n");
+}
+
+function formatScheduleHeader(scheduleCount: number): string {
+  const title = "OpenWiki Schedules";
+  const summary =
+    scheduleCount === 1
+      ? "1 connector schedule configured"
+      : `${scheduleCount} connector schedules configured`;
+
+  return [
+    "",
+    "=".repeat(title.length),
+    title,
+    "=".repeat(title.length),
+    summary,
+    "",
+  ].join("\n");
+}
+
+function formatPowerScheduleStatus(
+  schedule: PowerScheduleStatus | null,
+): string {
+  const divider = "-".repeat(22);
+
+  if (!schedule) {
+    return [
+      divider,
+      "Mac Wake Window",
+      divider,
+      "  Status : not configured",
+      "",
+      "",
+    ].join("\n");
+  }
+
+  const rows = [
+    ["Status", schedule.enabled ? "configured" : "disabled"],
+    ["Days", schedule.days || "unknown"],
+    ["Wake", schedule.wakeTime || "unknown"],
+    ["Sleep", schedule.sleepTime || "unknown"],
+    ["Updated", schedule.updatedAt],
+  ];
+
+  if (schedule.warning) {
+    rows.push(["Warning", schedule.warning]);
+  }
+
+  const labelWidth = Math.max(...rows.map(([label]) => label.length));
+  const body = rows
+    .map(([label, value]) => `  ${label.padEnd(labelWidth)} : ${value}`)
+    .join("\n");
+
+  return [divider, "Mac Wake Window", divider, body, "", ""].join("\n");
+}
+
+function formatScheduleStatus(schedule: ConnectorScheduleStatus): string {
+  const launchdStatus =
+    schedule.pausedAt !== undefined
+      ? "paused"
+      : schedule.launchAgentPath === undefined
+        ? "not installed"
+        : schedule.launchAgentLoaded
+          ? "loaded"
+          : schedule.launchAgentPlistExists
+            ? "plist exists, not loaded"
+            : "plist missing";
+  const rows = [
+    ["Schedule", schedule.description],
+    ["Cron", schedule.expression],
+    ["Launchd", launchdStatus],
+    ["Updated", schedule.updatedAt],
+  ];
+
+  if (schedule.pausedAt) {
+    rows.push(["Paused", schedule.pausedAt]);
+  }
+
+  if (schedule.launchAgentPath) {
+    rows.push(["Plist", schedule.launchAgentPath]);
+  }
+
+  if (schedule.warning) {
+    rows.push(["Warning", schedule.warning]);
+  }
+
+  const labelWidth = Math.max(...rows.map(([label]) => label.length));
+  const body = rows
+    .map(([label, value]) => `  ${label.padEnd(labelWidth)} : ${value}`)
+    .join("\n");
+  const divider = "-".repeat(Math.max(18, schedule.connectorId.length + 12));
+
+  return [
+    divider,
+    `Connector : ${schedule.connectorId}`,
+    divider,
+    body,
+    "",
+  ].join("\n");
+}
+
+async function runIngestCommand(
+  command: Extract<CliCommand, { kind: "ingest" }>,
+): Promise<void> {
+  try {
+    const result = await runOpenWikiIngestion(process.cwd(), {
+      debug: isDebugMode(),
+      modelId: command.modelId,
+      target: command.target,
+      onEvent: (event) => {
+        if (event.type === "text" && event.source !== "subgraph") {
+          process.stdout.write(event.text);
+        }
+      },
+    });
+
+    process.stdout.write("\nIngestion summary\n");
+    for (const sourceResult of result.results) {
+      process.stdout.write(
+        `- ${sourceResult.displayName}: ${sourceResult.status}; ${sourceResult.rawFiles.length} raw file(s)\n`,
+      );
+    }
+
+    process.exitCode = result.results.some(
+      (sourceResult) => sourceResult.status === "error",
+    )
+      ? 1
+      : 0;
+  } catch (error) {
+    process.stderr.write(`${getErrorMessage(error)}\n`);
+    writePrintErrorDiagnostics(error);
     process.exitCode = 1;
   }
 }

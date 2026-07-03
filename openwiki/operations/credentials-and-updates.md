@@ -74,7 +74,8 @@ preferences are stored in `~/.openwiki/onboarding.json`:
 - which sources have been connected,
 - optional per-source ingestion guidance,
 - per-source cron expressions and plain-English schedule descriptions,
-- macOS LaunchAgent paths when schedule installation succeeds.
+- macOS LaunchAgent paths when schedule installation succeeds,
+- optional macOS `pmset` wake/sleep window metadata.
 
 OAuth tokens and client secrets are not stored in this file. They remain in
 `~/.openwiki/.env`.
@@ -90,6 +91,35 @@ under `~/.openwiki/logs/`.
 LaunchAgent plists never embed secret values. Complex cron expressions that
 cannot be represented directly as `StartCalendarInterval` are saved in the
 onboarding profile with a warning instead of being installed inaccurately.
+
+After saving a source cron, onboarding can also configure a Mac wake window with
+`pmset`. OpenWiki computes a shared window across currently saved source
+schedules: wake 2 minutes before the earliest supported schedule, then sleep 30
+minutes after the latest supported schedule. The setup uses the macOS
+administrator prompt because changing `pmset` repeat schedules is a system power
+setting.
+
+`pmset` is a single machine-level repeat schedule, not a per-source scheduler.
+Setting it from OpenWiki may replace an existing repeat wake/sleep schedule. If
+the Mac is closed, powered off, out of battery, or the cron expression cannot be
+represented as a simple daily/weekly wake window, OpenWiki saves the source cron
+and records a warning instead of installing an inaccurate power schedule.
+
+Saved local schedules can be managed from the CLI:
+
+- `openwiki cron list` shows saved connector schedules, launchd state, and the
+  saved Mac wake window.
+- `openwiki cron pause <source|all>` unloads the matching launchd job(s), keeps
+  the cron metadata, and reconciles the shared `pmset` wake window.
+- `openwiki cron resume <source|all>` reinstalls paused launchd job(s) from the
+  saved cron metadata and reconciles the shared `pmset` wake window.
+- `openwiki cron delete <source|all>` unloads the matching launchd job(s),
+  removes the OpenWiki LaunchAgent plist(s), deletes only the schedule metadata,
+  and reconciles the shared `pmset` wake window. It does not remove connector
+  auth, connector config, raw data, or wiki content.
+
+When pause or delete leaves no active OpenWiki schedules, OpenWiki cancels the
+saved repeat `pmset` schedule and marks the saved wake window disabled.
 
 ## Provider resolution
 

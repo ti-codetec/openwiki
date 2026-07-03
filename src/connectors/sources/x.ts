@@ -105,6 +105,7 @@ async function ingest(
   const streams = normalizeStreams(options.streams, config.streams);
   const userId = config.userId ?? (await fetchAuthenticatedUserId(accessToken));
   const latestIds = { ...(state.latestIds ?? {}) };
+  const startTime = getWindowStartTime(options.windowHours);
 
   for (const stream of streams) {
     if (stream === "list_posts") {
@@ -115,6 +116,7 @@ async function ingest(
           `/lists/${encodeURIComponent(listId)}/tweets`,
           {
             since_id: latestIds[key],
+            start_time: startTime,
           },
           config.maxPagesPerStream,
         );
@@ -125,6 +127,7 @@ async function ingest(
             listId,
             pages,
             stream,
+            windowHours: normalizeWindowHours(options.windowHours),
           }),
         );
       }
@@ -135,7 +138,9 @@ async function ingest(
     const pages = await fetchPaginatedX(
       accessToken,
       getStreamPath(stream, userId),
-      stream === "bookmarks" ? {} : { since_id: latestIds[key] },
+      stream === "bookmarks"
+        ? {}
+        : { since_id: latestIds[key], start_time: startTime },
       config.maxPagesPerStream,
     );
     latestIds[key] = getNewestId(pages) ?? latestIds[key] ?? "";
@@ -145,6 +150,7 @@ async function ingest(
         pages,
         stream,
         userId,
+        windowHours: normalizeWindowHours(options.windowHours),
       }),
     );
   }
@@ -298,6 +304,26 @@ function removeEmptyValues(
         typeof entry[1] === "string" && entry[1].length > 0,
     ),
   );
+}
+
+function getWindowStartTime(
+  windowHours: number | undefined,
+): string | undefined {
+  const hours = normalizeWindowHours(windowHours);
+
+  if (hours === null) {
+    return undefined;
+  }
+
+  return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+}
+
+function normalizeWindowHours(windowHours: number | undefined): number | null {
+  if (typeof windowHours !== "number" || !Number.isFinite(windowHours)) {
+    return null;
+  }
+
+  return Math.max(1, Math.min(168, Math.trunc(windowHours)));
 }
 
 function getNestedString(value: unknown, path: string[]): string | null {

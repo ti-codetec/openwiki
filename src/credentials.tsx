@@ -36,6 +36,7 @@ import {
 } from "./onboarding.js";
 import {
   getSuggestedCronExpression,
+  installOpenWikiPowerSchedule,
   installConnectorSchedule,
   validateCronExpression,
 } from "./schedules.js";
@@ -67,6 +68,7 @@ type PromptStep =
   | "source-auth"
   | "source-cron-custom"
   | "source-cron-mode"
+  | "source-power-mode"
   | "source-description"
   | "source-description-custom"
   | "source-menu"
@@ -326,6 +328,10 @@ const CRON_MODE_OPTIONS = [
   "Use suggested schedule",
   "Enter custom cron",
 ] as const;
+const POWER_MODE_OPTIONS = [
+  "Set up Mac wake/sleep window",
+  "Skip power setup",
+] as const;
 const CRON_FIELD_LABELS = ["minute", "hour", "day", "month", "weekday"];
 const SOURCE_CONTINUE_OPTIONS = [
   "Go back to connections",
@@ -389,6 +395,7 @@ export function InitSetup({
     useState(0);
   const [templateSelectionIndex, setTemplateSelectionIndex] = useState(0);
   const [cronModeSelectionIndex, setCronModeSelectionIndex] = useState(0);
+  const [powerModeSelectionIndex, setPowerModeSelectionIndex] = useState(0);
   const [cronFieldSelectionIndex, setCronFieldSelectionIndex] = useState(0);
   const [cronReplaceCurrentField, setCronReplaceCurrentField] = useState(true);
   const [sourceContinueSelectionIndex, setSourceContinueSelectionIndex] =
@@ -538,6 +545,19 @@ export function InitSetup({
             index,
             key.upArrow ? -1 : 1,
             CRON_MODE_OPTIONS.length,
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (step === "source-power-mode") {
+      handleMenuInput(key, () =>
+        setPowerModeSelectionIndex((index) =>
+          moveSelectionIndex(
+            index,
+            key.upArrow ? -1 : 1,
+            POWER_MODE_OPTIONS.length,
           ),
         ),
       );
@@ -819,6 +839,7 @@ export function InitSetup({
       );
       setInput("");
       setCronModeSelectionIndex(0);
+      setPowerModeSelectionIndex(0);
       setCronFieldSelectionIndex(0);
       setCronReplaceCurrentField(true);
 
@@ -923,6 +944,18 @@ export function InitSetup({
       }
 
       await saveSourceSchedule(validation.expression);
+      return;
+    }
+
+    if (step === "source-power-mode") {
+      const selectedMode = POWER_MODE_OPTIONS[powerModeSelectionIndex];
+
+      if (selectedMode === "Set up Mac wake/sleep window") {
+        await saveMacPowerWindow();
+        return;
+      }
+
+      returnToSourceMenu();
       return;
     }
 
@@ -1241,9 +1274,42 @@ export function InitSetup({
         ...state,
         savedScheduleWarning: result.warning,
       }));
-      returnToSourceMenu();
+      setPowerModeSelectionIndex(0);
+      setStep("source-power-mode");
     } catch (scheduleError) {
       setError(getErrorMessage(scheduleError));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function saveMacPowerWindow() {
+    setIsSaving(true);
+
+    try {
+      const result = await installOpenWikiPowerSchedule(onboardingConfig);
+      const nextConfig: OpenWikiOnboardingConfig = {
+        ...onboardingConfig,
+        powerManagement: {
+          ...onboardingConfig.powerManagement,
+          pmset: {
+            days: result.days,
+            enabled: result.enabled,
+            sleepTime: result.sleepTime,
+            updatedAt: new Date().toISOString(),
+            wakeTime: result.wakeTime,
+            warning: result.warning,
+          },
+        },
+      };
+      await saveConfig(nextConfig);
+      setSourceState((state) => ({
+        ...state,
+        savedScheduleWarning: result.warning,
+      }));
+      returnToSourceMenu();
+    } catch (powerError) {
+      setError(getErrorMessage(powerError));
     } finally {
       setIsSaving(false);
     }
@@ -1378,6 +1444,7 @@ export function InitSetup({
             isCustomModelInput={isCustomModelInput}
             modelSelectionIndex={modelSelectionIndex}
             onboardingConfig={onboardingConfig}
+            powerModeSelectionIndex={powerModeSelectionIndex}
             provider={provider}
             providerSelectionIndex={providerSelectionIndex}
             secretInputIndex={secretInputIndex}
@@ -1438,6 +1505,7 @@ function Prompt({
   isCustomModelInput,
   modelSelectionIndex,
   onboardingConfig,
+  powerModeSelectionIndex,
   provider,
   providerSelectionIndex,
   secretInputIndex,
@@ -1460,6 +1528,7 @@ function Prompt({
   isCustomModelInput: boolean;
   modelSelectionIndex: number;
   onboardingConfig: OpenWikiOnboardingConfig;
+  powerModeSelectionIndex: number;
   provider: OpenWikiProvider;
   providerSelectionIndex: number;
   secretInputIndex: number;
@@ -1800,6 +1869,33 @@ function Prompt({
     );
   }
 
+  if (step === "source-power-mode") {
+    return (
+      <Box flexDirection="column">
+        <Text>Keep your Mac awake for scheduled refreshes?</Text>
+        <Text color="gray">
+          OpenWiki can use macOS pmset to wake 2 minutes before the earliest
+          saved source schedule and sleep 30 minutes after the latest one.
+        </Text>
+        {sourceState.savedScheduleWarning ? (
+          <Text color="yellow">{sourceState.savedScheduleWarning}</Text>
+        ) : null}
+        <Box flexDirection="column" marginTop={1}>
+          {POWER_MODE_OPTIONS.map((option, index) => (
+            <Text key={option}>
+              <SelectionMarker isSelected={index === powerModeSelectionIndex} />{" "}
+              {option}
+            </Text>
+          ))}
+        </Box>
+        <Text color="gray">
+          macOS has one global repeat power schedule. Setting this can replace
+          an existing pmset repeat wake/sleep schedule.
+        </Text>
+      </Box>
+    );
+  }
+
   if (step === "source-confirm-continue") {
     const missingSources = sourceOptions.filter(
       (source) => !onboardingConfig.sources[source.id]?.connectedAt,
@@ -1838,8 +1934,8 @@ function Prompt({
           </Text>
         ))}
         <Text color="gray">
-          Ingestion script orchestration will be implemented separately; this
-          saves setup and schedules now.
+          Run now executes one source-specific ingestion and wiki update per
+          configured source. Waiting exits and lets the saved schedules run.
         </Text>
       </Box>
     );
@@ -2570,6 +2666,7 @@ function getStaticSourceConfig(
       maxResults: 5,
       queries,
       searchDepth: "basic",
+      timeRange: "day",
       topic: "general",
     };
   }

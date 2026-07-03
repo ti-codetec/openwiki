@@ -2,6 +2,7 @@ import { isValidModelId, normalizeModelId } from "./constants.js";
 import type { OpenWikiCommand } from "./agent/types.js";
 import { isAuthProviderId } from "./auth/providers.js";
 import type { AuthProviderId } from "./auth/types.js";
+import { parseIngestionTarget, type IngestionTarget } from "./ingestion.js";
 
 export type HelpRow = {
   label: string;
@@ -33,6 +34,19 @@ export type CliCommand =
       exitCode: 0;
       port: number;
       url: string;
+    }
+  | {
+      kind: "ingest";
+      exitCode: 0;
+      modelId: string | null;
+      print: boolean;
+      target: IngestionTarget;
+    }
+  | {
+      kind: "cron";
+      action: "delete" | "list" | "pause" | "resume";
+      exitCode: 0;
+      target: IngestionTarget | null;
     }
   | { kind: "help"; exitCode: 0 }
   | {
@@ -169,6 +183,121 @@ export function parseCommand(argv: string[]): CliCommand {
       port,
       url: argv[2],
     };
+  }
+
+  if (argv[0] === "ingest") {
+    const target = parseIngestionTarget(argv[1] ?? "all");
+    if (!target) {
+      return {
+        kind: "error",
+        exitCode: 1,
+        message:
+          "Usage: openwiki ingest <source|all> [--print] [--modelId <id>]",
+      };
+    }
+
+    let modelId: string | null = null;
+    let print = false;
+    const optionArgs = argv.slice(2);
+    for (let index = 0; index < optionArgs.length; index += 1) {
+      const arg = optionArgs[index];
+
+      if (arg === "--print" || arg === "-p") {
+        print = true;
+        continue;
+      }
+
+      if (arg === "--modelId" || arg === "--model-id") {
+        const rawModelId = optionArgs[index + 1];
+        if (!rawModelId || rawModelId.startsWith("-")) {
+          return {
+            kind: "error",
+            exitCode: 1,
+            message: `${arg} requires a model ID.`,
+          };
+        }
+
+        const parsedModelId = normalizeModelId(rawModelId);
+        if (!isValidModelId(parsedModelId)) {
+          return {
+            kind: "error",
+            exitCode: 1,
+            message: `Invalid model ID: ${rawModelId}`,
+          };
+        }
+
+        modelId = parsedModelId;
+        index += 1;
+        continue;
+      }
+
+      if (arg.startsWith("--modelId=") || arg.startsWith("--model-id=")) {
+        const [, rawModelId = ""] = arg.split("=", 2);
+        const parsedModelId = normalizeModelId(rawModelId);
+        if (!isValidModelId(parsedModelId)) {
+          return {
+            kind: "error",
+            exitCode: 1,
+            message: `Invalid model ID: ${rawModelId}`,
+          };
+        }
+
+        modelId = parsedModelId;
+        continue;
+      }
+
+      return {
+        kind: "error",
+        exitCode: 1,
+        message: `Unknown option for ingest: ${arg}`,
+      };
+    }
+
+    return {
+      kind: "ingest",
+      exitCode: 0,
+      modelId,
+      print,
+      target,
+    };
+  }
+
+  if (argv[0] === "cron") {
+    if (argv[1] === "list" && argv.length === 2) {
+      return {
+        kind: "cron",
+        action: "list",
+        exitCode: 0,
+        target: null,
+      };
+    }
+
+    if (argv[1] === "pause" || argv[1] === "resume" || argv[1] === "delete") {
+      const target = parseIngestionTarget(argv[2] ?? "");
+      if (!target || argv.length > 3) {
+        return {
+          kind: "error",
+          exitCode: 1,
+          message: `Usage: openwiki cron ${argv[1]} <source|all>`,
+        };
+      }
+
+      return {
+        kind: "cron",
+        action: argv[1],
+        exitCode: 0,
+        target,
+      };
+    }
+
+    {
+      return {
+        kind: "error",
+        exitCode: 1,
+        message:
+          "Usage: openwiki cron list | pause <source|all> | resume <source|all> | delete <source|all>",
+      };
+    }
   }
 
   let dryRun = false;
@@ -312,6 +441,11 @@ export const helpContent: HelpContent = {
     "openwiki auth <provider>",
     "openwiki auth configure <provider> [--force]",
     "openwiki auth tools <provider>",
+    "openwiki ingest <source|all>",
+    "openwiki cron list",
+    "openwiki cron pause <source|all>",
+    "openwiki cron resume <source|all>",
+    "openwiki cron delete <source|all>",
     "openwiki ngrok start <url> [--port <port>]",
   ],
   commands: [
@@ -332,6 +466,30 @@ export const helpContent: HelpContent = {
     {
       label: "openwiki auth tools <provider>",
       description: "List available MCP tools for a configured auth provider.",
+    },
+    {
+      label: "openwiki ingest <source|all>",
+      description:
+        "Run source-specific ingestion and wiki update runs for one source or all configured sources.",
+    },
+    {
+      label: "openwiki cron list",
+      description: "List saved connector schedules and local launchd status.",
+    },
+    {
+      label: "openwiki cron pause <source|all>",
+      description:
+        "Pause saved connector schedules and reconcile the Mac wake window.",
+    },
+    {
+      label: "openwiki cron resume <source|all>",
+      description:
+        "Resume paused connector schedules and reconcile the Mac wake window.",
+    },
+    {
+      label: "openwiki cron delete <source|all>",
+      description:
+        "Delete saved connector schedules and remove stale local schedule files.",
     },
     {
       label: "openwiki ngrok start <url>",
@@ -373,6 +531,12 @@ export const helpContent: HelpContent = {
     "openwiki --modelId gpt-5.5",
     'openwiki --update --modelId gpt-5.5 "Please document the API routes first"',
     'openwiki --update "Refresh the wiki from configured connectors"',
+    "openwiki ingest all",
+    "openwiki ingest web-search",
+    "openwiki cron list",
+    "openwiki cron pause web-search",
+    "openwiki cron resume web-search",
+    "openwiki cron delete web-search",
     "openwiki auth slack",
     "openwiki auth gmail",
     "openwiki auth notion",

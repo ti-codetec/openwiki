@@ -112,6 +112,7 @@ async function ingest(
   }
 
   const limit = getOptionLimit(options.limit, config.maxResults);
+  const timeRange = getWindowedTimeRange(config.timeRange, options.windowHours);
   const tool = new TavilySearch({
     excludeDomains: normalizeStringArray(config.excludeDomains),
     includeAnswer: config.includeAnswer ?? true,
@@ -121,7 +122,7 @@ async function ingest(
     maxResults: limit,
     searchDepth: normalizeSearchDepth(config.searchDepth),
     tavilyApiKey,
-    timeRange: normalizeTimeRange(config.timeRange),
+    timeRange,
     topic: normalizeTopic(config.topic),
   });
 
@@ -140,8 +141,9 @@ async function ingest(
       queryCount: queries.length,
       results,
       searchDepth: normalizeSearchDepth(config.searchDepth),
-      timeRange: normalizeTimeRange(config.timeRange),
+      timeRange,
       topic: normalizeTopic(config.topic),
+      windowHours: normalizeWindowHours(options.windowHours),
     }),
   );
 
@@ -194,6 +196,27 @@ function normalizeTimeRange(
     value === "year"
     ? value
     : undefined;
+}
+
+function getWindowedTimeRange(
+  configuredTimeRange: WebSearchConfig["timeRange"],
+  windowHours: number | undefined,
+): "day" | "month" | "week" | "year" | undefined {
+  const normalized = normalizeTimeRange(configuredTimeRange);
+  if (normalized) {
+    return normalized;
+  }
+
+  const hours = normalizeWindowHours(windowHours);
+  return hours !== null && hours <= 24 ? "day" : normalized;
+}
+
+function normalizeWindowHours(windowHours: number | undefined): number | null {
+  if (typeof windowHours !== "number" || !Number.isFinite(windowHours)) {
+    return null;
+  }
+
+  return Math.max(1, Math.min(168, Math.trunc(windowHours)));
 }
 
 function getOptionLimit(

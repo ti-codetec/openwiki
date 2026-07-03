@@ -115,6 +115,11 @@ async function ingest(
     100,
   );
   const feeds = normalizeFeeds(options.streams, config.feeds);
+  const windowHours = normalizeWindowHours(options.windowHours);
+  const earliestUnixTime =
+    windowHours === null
+      ? null
+      : Math.floor((Date.now() - windowHours * 60 * 60 * 1000) / 1000);
   const feedResults = [];
 
   for (const feed of feeds) {
@@ -128,7 +133,7 @@ async function ingest(
         const item = await hnFirebaseApi<HackerNewsItem>(
           `/item/${encodeURIComponent(String(id))}.json`,
         );
-        if (item) {
+        if (item && isWithinWindow(item.time, earliestUnixTime)) {
           items.push(item);
         }
       }
@@ -150,6 +155,7 @@ async function ingest(
       queryResults.push({
         query,
         response: await searchHackerNews(query, {
+          earliestUnixTime,
           hitsPerPage: queryLimit,
           tags,
         }),
@@ -164,6 +170,7 @@ async function ingest(
       feeds: feedResults,
       fetchedAt: new Date().toISOString(),
       queryResults,
+      windowHours,
     }),
   );
 
@@ -206,9 +213,11 @@ async function hnFirebaseApi<T>(endpointPath: string): Promise<T> {
 async function searchHackerNews(
   query: string,
   {
+    earliestUnixTime,
     hitsPerPage,
     tags,
   }: {
+    earliestUnixTime: number | null;
     hitsPerPage: number;
     tags: string[];
   },
@@ -218,6 +227,9 @@ async function searchHackerNews(
   url.searchParams.set("hitsPerPage", String(hitsPerPage));
   if (tags.length > 0) {
     url.searchParams.set("tags", tags.join(","));
+  }
+  if (earliestUnixTime !== null) {
+    url.searchParams.set("numericFilters", `created_at_i>${earliestUnixTime}`);
   }
 
   const response = await fetch(url);
@@ -253,6 +265,21 @@ function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => item.trim().length > 0)
     : [];
+}
+
+function isWithinWindow(
+  itemUnixTime: number | undefined,
+  earliestUnixTime: number | null,
+): boolean {
+  return earliestUnixTime === null || (itemUnixTime ?? 0) >= earliestUnixTime;
+}
+
+function normalizeWindowHours(windowHours: number | undefined): number | null {
+  if (typeof windowHours !== "number" || !Number.isFinite(windowHours)) {
+    return null;
+  }
+
+  return Math.max(1, Math.min(168, Math.trunc(windowHours)));
 }
 
 function getOptionLimit(

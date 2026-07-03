@@ -30,7 +30,8 @@ Run discipline:
 
 Connector ingestion discipline:
 - OpenWiki has built-in local connectors for git-repo, notion, x, google, web-search, hackernews, and slack. Use openwiki_list_connectors to inspect connector capabilities, config paths, required env var names, and raw data paths.
-- During init or update runs, when the user's goal involves personal/general knowledge sources or configured connectors, call openwiki_ingest_connector or openwiki_ingest_all_connectors before synthesizing wiki updates.
+- Scheduled and onboarding ingestion is orchestrated outside the agent with one source-specific update run per connector. If the user prompt includes raw data file paths for a source, inspect those files and do not call openwiki_ingest_all_connectors or ingest unrelated connectors.
+- During ordinary chat/update runs where no source-specific raw data paths are supplied and the user explicitly asks to refresh a connector, call openwiki_ingest_connector for that one connector before synthesizing wiki updates.
 - Connector ingestion tools are the only tools that should perform credentialed external fetching. They must write raw data/manifests under ~/.openwiki/connectors/<connector>/raw and return metadata only.
 - Never ask to see, print, summarize, or copy secret values. Refer to connector credentials only by env var name, such as OPENWIKI_X_ACCESS_TOKEN or OPENWIKI_NOTION_MCP_ACCESS_TOKEN.
 - Use openwiki_list_raw_items and openwiki_read_raw_item to inspect downloaded connector data. These tools are constrained to connector raw directories. Prefer latestFiles from openwiki_list_raw_items when answering current-state questions.
@@ -164,7 +165,7 @@ export function createModeInstructions(command: OpenWikiCommand): string {
 - This is an initial documentation run.
 - Assume ${OPEN_WIKI_DIR}/ does not yet contain useful documentation.
 - Build the documentation structure from scratch.
-- If connector data is configured or the user asks for a general knowledge wiki, first inspect available connectors and ingest relevant sources before writing documentation.
+- If source-specific connector raw data paths are supplied, inspect those files before writing documentation. Otherwise, focus on the repository and do not ingest every connector by default.
 - First build a repository inventory: existing docs, graph/app entrypoints, package/config files, major domain folders, tests/evals, data/schema files, skill/playbook files, and operational scripts.
 - Use git evidence during init to understand how important files and workflows came to be. Prefer recent commits and targeted git blame/show on high-signal files.
 - If the repo already has substantial docs, create a wiki that functions as an opinionated map and synthesis layer over those docs.
@@ -179,7 +180,7 @@ export function createModeInstructions(command: OpenWikiCommand): string {
 - This is a maintenance update run.
 - Inspect the existing ${OPEN_WIKI_DIR}/ documentation before editing.
 - Read ${UPDATE_METADATA_PATH} if it exists.
-- If connector data is configured or the user asks for a general knowledge wiki, first inspect available connectors and ingest relevant sources. Then inspect the connector raw manifests/files that changed and update the wiki from that local evidence.
+- If source-specific connector raw data paths are supplied, inspect those files and update the wiki from that local evidence. Do not run all connector ingestions from inside the agent.
 - Always use git-oriented repository evidence to understand recent changes. Inspect commits added since the previous successful run using the recorded gitHead when available. If shell execution is unavailable, use filesystem timestamps, source inspection, and existing docs to infer what changed.
 - Before editing, build a docs impact plan from the changed source files: source change -> docs affected -> edit needed -> why. If a page cannot be tied to a relevant source, workflow, product, or existing-doc change, do not edit it.
 - Update runs must be surgical. Preserve useful existing structure and wording when it remains accurate. Prefer replacing one stale sentence over adding new paragraphs.

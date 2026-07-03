@@ -92,13 +92,22 @@ export function createOpenWikiConnectorTools(): StructuredToolInterface[] {
         properties: {
           connectorId: {
             type: "string",
-            enum: ["git-repo", "google", "notion", "slack", "x"],
+            enum: [
+              "git-repo",
+              "google",
+              "hackernews",
+              "notion",
+              "slack",
+              "web-search",
+              "x",
+            ],
           },
           limit: { type: "number" },
           streams: {
             type: "array",
             items: { type: "string" },
           },
+          windowHours: { type: "number" },
         },
         required: ["connectorId"],
         additionalProperties: false,
@@ -131,7 +140,15 @@ export function createOpenWikiConnectorTools(): StructuredToolInterface[] {
         properties: {
           connectorId: {
             type: "string",
-            enum: ["git-repo", "google", "notion", "slack", "x"],
+            enum: [
+              "git-repo",
+              "google",
+              "hackernews",
+              "notion",
+              "slack",
+              "web-search",
+              "x",
+            ],
           },
         },
         required: ["connectorId"],
@@ -151,7 +168,15 @@ export function createOpenWikiConnectorTools(): StructuredToolInterface[] {
         properties: {
           connectorId: {
             type: "string",
-            enum: ["git-repo", "google", "notion", "slack", "x"],
+            enum: [
+              "git-repo",
+              "google",
+              "hackernews",
+              "notion",
+              "slack",
+              "web-search",
+              "x",
+            ],
           },
           maxBytes: {
             type: "number",
@@ -358,6 +383,7 @@ function getIngestOptions(input: unknown): ConnectorIngestOptions {
   return {
     limit: getNumberInput(input, "limit") ?? undefined,
     streams: getStringArrayInput(input, "streams"),
+    windowHours: getNumberInput(input, "windowHours") ?? undefined,
   };
 }
 
