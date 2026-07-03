@@ -3,7 +3,7 @@ import { saveOpenWikiEnv } from "../env.js";
 
 const DEFAULT_CALLBACK_PORT = 53682;
 const OAUTH_CALLBACK_PORT_ENV_KEY = "OPENWIKI_OAUTH_CALLBACK_PORT";
-const OAUTH_REDIRECT_URI_ENV_KEY = "OPENWIKI_OAUTH_REDIRECT_URI";
+const HTTPS_OAUTH_REDIRECT_URI_ENV_KEY = "OPENWIKI_HTTPS_OAUTH_REDIRECT_URI";
 
 export type NgrokStartOptions = {
   port?: number;
@@ -25,12 +25,12 @@ export async function startNgrokTunnel({
 
   await saveOpenWikiEnv({
     [OAUTH_CALLBACK_PORT_ENV_KEY]: String(validatedPort),
-    [OAUTH_REDIRECT_URI_ENV_KEY]: normalized.redirectUri,
+    [HTTPS_OAUTH_REDIRECT_URI_ENV_KEY]: normalized.redirectUri,
   });
 
   process.stdout.write(
     [
-      `Saved ${OAUTH_REDIRECT_URI_ENV_KEY}=${normalized.redirectUri}`,
+      `Saved ${HTTPS_OAUTH_REDIRECT_URI_ENV_KEY}=${normalized.redirectUri}`,
       `Saved ${OAUTH_CALLBACK_PORT_ENV_KEY}=${validatedPort}`,
       `Register this Slack redirect URL: ${normalized.redirectUri}`,
       `Starting ngrok: ngrok http ${validatedPort} --url ${normalized.baseUrl}`,

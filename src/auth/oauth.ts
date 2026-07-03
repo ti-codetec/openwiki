@@ -38,14 +38,14 @@ type ProtectedResourceMetadata = {
 const CALLBACK_HOST = "127.0.0.1";
 const DEFAULT_CALLBACK_PORT = 53682;
 const OAUTH_CALLBACK_PORT_ENV_KEY = "OPENWIKI_OAUTH_CALLBACK_PORT";
-const OAUTH_REDIRECT_URI_ENV_KEY = "OPENWIKI_OAUTH_REDIRECT_URI";
+const HTTPS_OAUTH_REDIRECT_URI_ENV_KEY = "OPENWIKI_HTTPS_OAUTH_REDIRECT_URI";
 
 export async function runOAuthAuth(
   providerId: AuthProviderId,
 ): Promise<OAuthRunResult> {
   await loadOpenWikiEnv();
   const provider = getAuthProvider(providerId);
-  const callback = await createCallbackServer();
+  const callback = await createCallbackServer(provider);
   const state = createRandomUrlToken();
   const codeVerifier = createRandomUrlToken(64);
   const codeChallenge = createCodeChallenge(codeVerifier);
@@ -376,7 +376,7 @@ function mapTokenResponse(
   return updates;
 }
 
-async function createCallbackServer(): Promise<{
+async function createCallbackServer(provider: OAuthProviderConfig): Promise<{
   close: () => Promise<void>;
   redirectUri: string;
   waitForCode: (expectedState: string) => Promise<string>;
@@ -399,14 +399,14 @@ async function createCallbackServer(): Promise<{
     const error = requestUrl.searchParams.get("error");
 
     if (error) {
-      response.writeHead(400, { "Content-Type": "text/plain" });
+      response.writeHead(400, getCallbackResponseHeaders());
       response.end("OpenWiki authorization failed. You can close this tab.");
       rejectCode?.(new Error(`OAuth provider returned error: ${error}`));
       return;
     }
 
     if (!code || !state) {
-      response.writeHead(400, { "Content-Type": "text/plain" });
+      response.writeHead(400, getCallbackResponseHeaders());
       response.end(
         "OpenWiki authorization callback was missing required data.",
       );
@@ -414,7 +414,7 @@ async function createCallbackServer(): Promise<{
       return;
     }
 
-    response.writeHead(200, { "Content-Type": "text/plain" });
+    response.writeHead(200, getCallbackResponseHeaders());
     response.end("OpenWiki authorization complete. You can close this tab.");
     resolveCode?.(`${state}:${code}`);
   });
@@ -431,11 +431,8 @@ async function createCallbackServer(): Promise<{
   const localRedirectUri = `http://${CALLBACK_HOST}:${address.port}/callback`;
 
   return {
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      }),
-    redirectUri: getProviderRedirectUri(localRedirectUri),
+    close: () => closeCallbackServer(server),
+    redirectUri: getProviderRedirectUri(provider, localRedirectUri),
     waitForCode: async (expectedState: string) => {
       const stateAndCode = await codePromise;
       const separatorIndex = stateAndCode.indexOf(":");
@@ -449,6 +446,37 @@ async function createCallbackServer(): Promise<{
       return code;
     },
   };
+}
+
+function getCallbackResponseHeaders(): Record<string, string> {
+  return {
+    Connection: "close",
+    "Content-Type": "text/plain",
+  };
+}
+
+function closeCallbackServer(server: http.Server): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let completed = false;
+    const forceCloseTimer = setTimeout(() => {
+      if (!completed) {
+        server.closeAllConnections?.();
+      }
+    }, 1000);
+
+    server.close((error) => {
+      completed = true;
+      clearTimeout(forceCloseTimer);
+
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+    server.closeIdleConnections?.();
+  });
 }
 
 function getCallbackPort(): number {
@@ -471,35 +499,44 @@ function getCallbackPort(): number {
   return port;
 }
 
-function getProviderRedirectUri(localRedirectUri: string): string {
-  const override = process.env[OAUTH_REDIRECT_URI_ENV_KEY];
+function getProviderRedirectUri(
+  provider: OAuthProviderConfig,
+  localRedirectUri: string,
+): string {
+  const override = process.env[HTTPS_OAUTH_REDIRECT_URI_ENV_KEY];
+  if (!providerUsesHttpsRedirectOverride(provider)) {
+    return localRedirectUri;
+  }
+
   if (!override) {
     return localRedirectUri;
   }
 
   const url = new URL(override);
-  const isLocalhost =
-    url.hostname === "localhost" ||
-    url.hostname === "127.0.0.1" ||
-    url.hostname === "::1";
 
   if (url.pathname !== "/callback") {
-    throw new Error(`${OAUTH_REDIRECT_URI_ENV_KEY} must end with /callback.`);
+    throw new Error(
+      `${HTTPS_OAUTH_REDIRECT_URI_ENV_KEY} must end with /callback.`,
+    );
   }
 
   if (url.username || url.password || url.hash) {
     throw new Error(
-      `${OAUTH_REDIRECT_URI_ENV_KEY} must not include credentials or a fragment.`,
+      `${HTTPS_OAUTH_REDIRECT_URI_ENV_KEY} must not include credentials or a fragment.`,
     );
   }
 
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLocalhost)) {
-    throw new Error(
-      `${OAUTH_REDIRECT_URI_ENV_KEY} must use https, except localhost http.`,
-    );
+  if (url.protocol !== "https:") {
+    throw new Error(`${HTTPS_OAUTH_REDIRECT_URI_ENV_KEY} must use https.`);
   }
 
   return url.toString();
+}
+
+function providerUsesHttpsRedirectOverride(
+  provider: OAuthProviderConfig,
+): boolean {
+  return provider.id === "slack";
 }
 
 async function openBrowser(url: string): Promise<boolean> {

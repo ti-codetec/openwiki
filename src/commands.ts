@@ -336,7 +336,7 @@ export const helpContent: HelpContent = {
     {
       label: "openwiki ngrok start <url>",
       description:
-        "Start an ngrok tunnel for Slack OAuth and save the OpenWiki redirect URI.",
+        "Start an ngrok tunnel for Slack OAuth and save the Slack HTTPS redirect URI.",
     },
   ],
   options: [
