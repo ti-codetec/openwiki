@@ -18,9 +18,27 @@ Initialize OpenWiki, configure your model and API key, then generate documentati
 openwiki --init
 ```
 
+OpenWiki has two modes:
+
+- **Brain mode** builds a local second-brain wiki in `~/.openwiki/wiki` from
+  configured sources like local repositories, Gmail, Notion, Web Search, Hacker
+  News, and X/Twitter.
+- **Code mode** builds repository documentation in `openwiki/` for the current
+  codebase.
+
+The interactive `openwiki --init` flow asks which mode to use. You can also be
+explicit with `openwiki brain --init`, `openwiki code --init`, or
+`openwiki --init --mode <brain|code>`.
+
 Then to ensure your documentation stays up-to-date, add the GitHub action to your repository to automatically open a PR once a day with documentation updates: [openwiki-update.yml](./examples/openwiki-update.yml)
 
 Copy the contents of that file into `.github/workflows/openwiki-update.yml` in your repository.
+
+For repository documentation in GitHub Actions, use
+`openwiki code --update --print`. You do not need to run `--init` in CI:
+`--update` will create the initial `openwiki/` docs if they do not exist yet, as
+long as the workflow provides the required provider and model environment
+variables.
 
 ## Usage
 
@@ -56,10 +74,22 @@ Initialize repository code documentation instead of the default local brain wiki
 openwiki --init --mode code
 ```
 
+You can also use the positional mode command:
+
+```sh
+openwiki code --init
+```
+
 Update existing documentation:
 
 ```sh
 openwiki --update
+```
+
+Update repository code documentation:
+
+```sh
+openwiki code --update
 ```
 
 Run an update that can ingest configured local connectors first:
