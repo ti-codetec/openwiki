@@ -335,6 +335,7 @@ function createSourceSynthesisPolicy(connectorId: ConnectorId): string {
 - Synthesize into canonical cross-source files when relevant: /open-questions.md for unresolved memory/wiki questions, /themes.md for recurring trends, /commitments.md for work tasks/follow-ups, /personal-logistics.md for non-work life-admin items, /quickstart.md for high-level navigation/current status, and /sources/${connectorId}.md for compact source evidence.
 - Apply confidence labels: confirmed, source-backed, watchlist, or saved-context. Keep weak/watchlist items out of /quickstart.md unless they materially affect current status.
 - Deduplicate with stable topic keys. Update existing themes, open questions, and commitments instead of repeating the same fact in several source pages.
+- Keep /themes.md as a compact index: prefer table rows or one short fielded entry per theme, cap prose at 1-2 short sentences, and move details/examples into source pages.
 - If /open-questions.md exists, read it at the start so known open questions shape evidence review. At the end, return to it to add real newly discovered questions and move answered questions from Active to Answered.
 - Keep /open-questions.md for uncertainty about the user's core memory or wiki quality, not unresolved questions that merely appear inside source documents. Group similar questions under one topic key.
 - Keep /open-questions.md concise: Active entries use Owner, Seen, Evidence, and optional Notes; Answered entries use Evidence linking to the answer and Answered date; Stale entries use Why and Last seen.
@@ -359,15 +360,15 @@ function createConnectorSynthesisGuidance(connectorId: ConnectorId): string {
     case "x":
       return `
 - Treat bookmarks and liked/saved social content as saved-context unless there is explicit evidence it is a commitment or active project.
-- Promote X items to /themes.md only when they recur, match existing topics, have source diversity, or are clearly high-signal for the user's stated goals.`;
+- Promote X items to /themes.md only when they recur, match existing topics, have source diversity, or are clearly high-signal for the user's stated goals. Keep the theme row terse and leave tweet clusters/details in /sources/x.md.`;
     case "hackernews":
       return `
 - Treat low-engagement Hacker News items as watchlist by default. Promote to /themes.md only when the item recurs, matches existing topics, has strong engagement, or corroborates another source.
-- Keep /sources/hackernews.md focused on compact evidence and avoid turning feed items into current status without stronger support.`;
+- Keep /sources/hackernews.md focused on compact evidence and avoid turning feed items into current status without stronger support. If promoted, add only a short theme row or watchlist entry.`;
     case "web-search":
       return `
 - Treat web search results as source-backed only when the result is credible and relevant to the user's stated goals. Use watchlist for uncertain or single weak results.
-- Merge recurring search findings into existing /themes.md topic keys instead of creating one-off source-page summaries.`;
+- Merge recurring search findings into existing /themes.md topic keys instead of creating one-off source-page summaries. Keep the theme update to one compact row/entry.`;
     case "slack":
       return `
 - Route direct work requests, mentions, deadlines, approvals, and follow-ups to /commitments.md with Owner when inferable. Use /open-questions.md only for memory/wiki uncertainty that would impair future assistance.

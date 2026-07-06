@@ -294,13 +294,19 @@ function getOutputPromptConfig(
 - Maintain these canonical files when relevant:
   - /quickstart.md: navigation and current high-level status only. Emphasize confirmed and strong source-backed facts; link out for detail.
   - /open-questions.md: concise questions about the user's wiki or core memory model. Use sections named Active, Answered, and Stale.
-  - /themes.md: recurring themes and trends across sources. Include a stable topic key, first seen, last seen, confidence, source diversity, evidence count, status, and brief evidence references.
+  - /themes.md: compact recurring themes and trends index. Use stable topic keys and terse rows/entries; keep detailed explanation in source pages.
   - /commitments.md: concrete work tasks, commitments, scheduled items, approvals, and follow-ups, especially from Gmail, Notion, Slack, and direct mentions. Include Owner: me, team, other:<name>, or unknown when inferable from evidence.
   - /personal-logistics.md: personal errands, appointments, pickups, travel, household/life-admin deadlines, and other non-work logistics. Do not mix routine personal logistics into /commitments.md unless they are also work commitments.
   - /sources/<connector>.md: concise source evidence and ingestion coverage only. Do not make source pages the primary synthesis layer.
 - Only add /open-questions.md entries for uncertainty about the user's memory graph or wiki quality, such as unclear recurring routines, unknown locations, uncertain preferences, ambiguous people/org relationships, contradictory evidence, or missing context needed for future assistance. Example: "Brace has a weekly workout class, but the gym location is unclear."
 - Do not write open questions merely because a source document contains unresolved product/design questions, comments, or TODOs. Keep those on source pages, /themes.md, or /commitments.md unless the question is explicitly owned by the user or creates a gap in the user's core memory.
 - Group related open questions under one topic key instead of creating many separate entries for the same source document or project.
+- Keep /themes.md concise:
+  - Treat it as an index of recurring signals, not a narrative page.
+  - Prefer a Markdown table with columns: Topic key, Theme/Signal, First seen, Last seen, Confidence, Sources, Evidence count, Status, Evidence.
+  - If a table is too cramped, use one short section per theme with the same fields, plus at most one Notes bullet.
+  - Cap each theme's prose at 1-2 short sentences. Put detail, examples, long context, and item lists in /sources/<connector>.md, /commitments.md, or /personal-logistics.md and link there.
+  - Update existing theme rows instead of appending explanatory paragraphs. Watchlist entries should be especially terse.
 - Structure /open-questions.md entries concisely:
   <open_questions_structure>
     # Open Questions
