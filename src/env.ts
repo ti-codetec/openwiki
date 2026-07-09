@@ -33,6 +33,7 @@ import {
   OPENWIKI_TAVILY_API_KEY_ENV_KEY,
   OPENWIKI_MODEL_ID_ENV_KEY,
   OPENWIKI_PROVIDER_ENV_KEY,
+  OPENWIKI_TELEMETRY_DISABLED_ENV_KEY,
 } from "./constants.js";
 import { isFileNotFoundError } from "./fs-errors.js";
 
@@ -72,6 +73,7 @@ export const MANAGED_ENV_KEYS = [
   OPENROUTER_API_KEY_ENV_KEY,
   OPENWIKI_PROVIDER_ENV_KEY,
   OPENWIKI_MODEL_ID_ENV_KEY,
+  OPENWIKI_TELEMETRY_DISABLED_ENV_KEY,
   OPENWIKI_NOTION_TOKEN_ENV_KEY,
   OPENWIKI_NOTION_MCP_CLIENT_ID_ENV_KEY,
   OPENWIKI_NOTION_MCP_ACCESS_TOKEN_ENV_KEY,
@@ -98,11 +100,12 @@ export const MANAGED_ENV_KEYS = [
   "LANGCHAIN_TRACING_V2",
 ] as const;
 
-// LangChain project/tracing settings are managed but are not credentials, so
-// they are excluded from the diagnostics panel.
+// LangChain project/tracing settings and the telemetry opt-out flag are managed
+// but are not credentials, so they are excluded from the diagnostics panel.
 const NON_CREDENTIAL_ENV_KEYS = new Set<string>([
   "LANGCHAIN_PROJECT",
   "LANGCHAIN_TRACING_V2",
+  OPENWIKI_TELEMETRY_DISABLED_ENV_KEY,
 ]);
 
 /**

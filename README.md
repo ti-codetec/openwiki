@@ -206,6 +206,30 @@ Base URLs (and all credentials) can be set in your environment or stored in `~/.
 
 If there's an inference provider or model you'd like to see added, please open a PR!
 
+## Telemetry
+
+OpenWiki collects a single anonymous event the first time you initialize a brain (`openwiki code --init` or `openwiki personal --init`), so we can see how many people use each mode.
+
+**What is sent:** a random install ID (generated locally, stored in `~/.openwiki/install-id`) and the mode (`code` or `personal`).
+
+**What is never sent:** file contents, repository data, credentials, prompts, model output, or any personal information.
+
+Scheduled/CI runs (`openwiki code --update`) send nothing.
+
+To see exactly what would be sent, run an init with `--telemetry-file=<path>` and inspect the JSON it writes.
+
+### Opting out
+
+Set either environment variable:
+
+```sh
+export OPENWIKI_TELEMETRY_DISABLED=1
+# or the cross-tool standard:
+export DO_NOT_TRACK=1
+```
+
+To disable it permanently, add `OPENWIKI_TELEMETRY_DISABLED=1` to `~/.openwiki/.env`.
+
 ## Contributing
 
 Contributions are welcome! Please read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a PR. We intentionally keep PRs tightly scoped to one change each, and PRs that bundle unrelated changes may be closed with a request to split them.
