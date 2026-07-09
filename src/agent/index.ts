@@ -45,7 +45,11 @@ import {
   shouldCheckUpdateNoop,
   writeLastUpdateMetadata,
 } from "./utils.js";
-import { initTelemetryMode, recordInit } from "../telemetry.js";
+import {
+  initTelemetryMode,
+  recordInit,
+  showFirstRunNoticeIfNeeded,
+} from "../telemetry.js";
 
 export async function runOpenWikiAgent(
   command: OpenWikiCommand,
@@ -127,6 +131,13 @@ async function runOpenWikiAgentCore(
   modelId: string,
 ): Promise<OpenWikiRunResult> {
   const outputMode = options.outputMode ?? "local-wiki";
+
+  // Print the telemetry disclosure up front (first init only), before the agent
+  // produces any output. The event itself is still sent after the run completes.
+  if (command === "init") {
+    await showFirstRunNoticeIfNeeded();
+  }
+
   const context = await createRunContext(command, cwd, outputMode);
   emitDebug(options, "context=created");
   const openWikiSnapshotBefore =

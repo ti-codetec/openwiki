@@ -42,6 +42,7 @@ const {
   initTelemetryMode,
   isTelemetryDisabled,
   recordInit,
+  showFirstRunNoticeIfNeeded,
 } = await import("../src/telemetry.ts");
 
 const UUID_PATTERN =
@@ -157,44 +158,69 @@ describe("getOrCreateInstallId", () => {
   });
 });
 
-describe("recordInit — local behavior", () => {
-  it("writes nothing and prints nothing when opted out", async () => {
-    process.env.DO_NOT_TRACK = "1";
-    const writeSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+describe("showFirstRunNoticeIfNeeded", () => {
+  it("prints the one-time notice on the first init only", async () => {
+    const writeSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await recordInit("code");
+    await showFirstRunNoticeIfNeeded();
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+
+    await showFirstRunNoticeIfNeeded();
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+
+    writeSpy.mockRestore();
+  });
+
+  it("prints nothing and mints no id when opted out", async () => {
+    process.env.DO_NOT_TRACK = "1";
+    const writeSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await showFirstRunNoticeIfNeeded();
 
     expect(writeSpy).not.toHaveBeenCalled();
     await expect(stat(INSTALL_ID_PATH)).rejects.toThrow();
     writeSpy.mockRestore();
   });
 
-  it("prints the one-time notice on the first init only", async () => {
-    const writeSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  it("never throws when the underlying filesystem fails", async () => {
+    // A directory at the id path makes the read/create fail.
+    await mkdir(INSTALL_ID_PATH, { recursive: true });
 
-    await recordInit("personal");
-    expect(writeSpy).toHaveBeenCalledTimes(1);
+    await expect(showFirstRunNoticeIfNeeded()).resolves.toBeUndefined();
+  });
+});
+
+describe("recordInit — local behavior", () => {
+  it("mints no id and sends nothing when opted out", async () => {
+    process.env.DO_NOT_TRACK = "1";
+    process.env.OPENWIKI_POSTHOG_KEY = "phc_test";
 
     await recordInit("code");
-    expect(writeSpy).toHaveBeenCalledTimes(1);
 
+    await expect(stat(INSTALL_ID_PATH)).rejects.toThrow();
+    expect(ctorMock).not.toHaveBeenCalled();
+  });
+
+  it("does not print the notice — that is shown earlier at run start", async () => {
+    process.env.OPENWIKI_POSTHOG_KEY = "phc_test";
+    const writeSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await recordInit("code");
+
+    expect(writeSpy).not.toHaveBeenCalled();
     writeSpy.mockRestore();
   });
 
   it("never throws when the underlying filesystem fails", async () => {
     // Make the id path a directory so the read/create both fail.
     await mkdir(INSTALL_ID_PATH, { recursive: true });
-    const writeSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
 
     await expect(recordInit("code")).resolves.toBeUndefined();
-    expect(writeSpy).not.toHaveBeenCalled();
-
-    writeSpy.mockRestore();
   });
 });
 
 describe("recordInit — PostHog capture", () => {
-  it("sends exactly one anonymous openwiki_init event with the mode", async () => {
+  it("sends exactly one mode-named anonymous event", async () => {
     process.env.OPENWIKI_POSTHOG_KEY = "phc_test";
 
     await recordInit("code");
@@ -211,10 +237,11 @@ describe("recordInit — PostHog capture", () => {
     const stored = (await readFile(INSTALL_ID_PATH, "utf8")).trim();
     expect(stored).toMatch(UUID_PATTERN);
 
-    // The captured payload must be exactly this shape — nothing extra.
+    // The captured payload must be exactly this shape — nothing extra. The mode
+    // is encoded in the event name AND kept as a property.
     expect(captureMock).toHaveBeenCalledWith({
       distinctId: stored,
-      event: "openwiki_init",
+      event: "openwiki_init_code",
       properties: {
         mode: "code",
         $process_person_profile: false,
@@ -222,6 +249,16 @@ describe("recordInit — PostHog capture", () => {
     });
 
     expect(shutdownMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the event openwiki_init_personal for personal mode", async () => {
+    process.env.OPENWIKI_POSTHOG_KEY = "phc_test";
+
+    await recordInit("personal");
+
+    expect(captureMock).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "openwiki_init_personal" }),
+    );
   });
 
   it("uses OPENWIKI_POSTHOG_HOST when set", async () => {
@@ -277,7 +314,7 @@ describe("recordInit — telemetry file (tee)", () => {
     expect(record.disabled).toBe(false);
     expect(record.sent).toBe(true);
     expect(record.host).toBe(DEFAULT_POSTHOG_HOST);
-    expect(record.event.event).toBe("openwiki_init");
+    expect(record.event.event).toBe("openwiki_init_code");
     expect(record.event.distinctId).toMatch(UUID_PATTERN);
     expect(record.event.properties).toEqual({
       mode: "code",
@@ -324,7 +361,7 @@ describe("recordInit — telemetry file (tee)", () => {
     await writeFile(INSTALL_ID_PATH, "seeded-id\n", "utf8");
     const dirTarget = path.join(TEST_HOME, "not-a-file");
     await mkdir(dirTarget, { recursive: true });
-    const writeSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const writeSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await expect(
       recordInit("code", { telemetryFile: dirTarget }),

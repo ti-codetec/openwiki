@@ -4,7 +4,8 @@ import path from "node:path";
 import { PostHog } from "posthog-node";
 
 import type { OpenWikiCommand, OpenWikiOutputMode } from "./agent/types.js";
-import { ensureOpenWikiHome, openWikiHomeDir } from "./openwiki-home.js";
+import { TELEMETRY_INIT_EVENT } from "./constants.js";
+import { openWikiHomeDir } from "./openwiki-home.js";
 
 /**
  * Which brain a run established. Mirrors the CLI's run modes.
@@ -49,10 +50,14 @@ const FLUSH_TIMEOUT_MS = 2000;
  * One-time notice shown on the first init, in keeping with CLI norms.
  */
 const FIRST_RUN_NOTICE = `
+──── OpenWiki telemetry ──────────────────────────────────────
 OpenWiki collects anonymous usage counts: which brain you initialize (code or
 personal) and a random install ID. No file contents, repository data,
 credentials, or personal information are ever sent.
-Opt out anytime: set OPENWIKI_TELEMETRY_DISABLED=1 (or DO_NOT_TRACK=1).
+
+Opt out anytime: set OPENWIKI_TELEMETRY_DISABLED=1 (or DO_NOT_TRACK=1) —
+add it to ~/.openwiki/.env to make it permanent.
+──────────────────────────────────────────────────────────────
 `;
 
 /**
@@ -130,7 +135,10 @@ export async function getOrCreateInstallId(): Promise<{
   }
 
   const id = randomUUID();
-  await ensureOpenWikiHome();
+  // Only the bare ~/.openwiki dir is needed for the install-id — not the
+  // personal-brain scaffold (connectors/wiki/skills). This matches what the
+  // agent checkpointer creates, so a code-mode init doesn't pull in a brain.
+  await mkdir(openWikiHomeDir, { recursive: true, mode: 0o700 });
   await writeFile(INSTALL_ID_PATH, `${id}\n`, {
     encoding: "utf8",
     mode: 0o600,
@@ -185,8 +193,9 @@ async function writeTelemetryFile(
     await writeFile(resolved, `${JSON.stringify(record, null, 2)}\n`, "utf8");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(
-      `OpenWiki: could not write telemetry file "${filePath}": ${message}\n`,
+    // console.error so it renders cleanly above the live TUI (Ink patchConsole).
+    console.error(
+      `OpenWiki: could not write telemetry file "${filePath}": ${message}`,
     );
   }
 }
@@ -209,18 +218,45 @@ export function initTelemetryMode(
 }
 
 /**
- * Records that a brain was initialized. Called only for `--init` runs. Never
- * throws: any failure (disabled, missing key, network, filesystem) is swallowed
- * so telemetry can never affect the run's outcome. With options.telemetryFile
- * set, the exact payload is also teed to that path.
+ * Shows the one-time first-run notice, if telemetry is enabled and this is the
+ * first init on this machine (the install id was just minted). Called at the
+ * START of an init run so the disclosure prints before any command output rather
+ * than after it. Opt-out is absolute (no id minted, nothing printed) and it
+ * never throws.
+ */
+export async function showFirstRunNoticeIfNeeded(): Promise<void> {
+  if (isTelemetryDisabled()) {
+    return;
+  }
+
+  try {
+    const { isNew } = await getOrCreateInstallId();
+
+    if (isNew) {
+      // console.error (not raw stderr.write) so Ink's patchConsole renders it
+      // cleanly above the live TUI; still goes to stderr on the plain path.
+      console.error(FIRST_RUN_NOTICE);
+    }
+  } catch {
+    // Intentionally ignored: telemetry must never break a run.
+  }
+}
+
+/**
+ * Records that a brain was initialized. Called only for `--init` runs, after the
+ * run completes. Never throws: any failure (disabled, missing key, network,
+ * filesystem) is swallowed so telemetry can never affect the run's outcome. The
+ * event name encodes the mode (openwiki_init_code / openwiki_init_personal) so
+ * it is visible in the raw event feed, with mode also kept as a property for
+ * breakdowns.
  */
 export async function recordInit(
   mode: TelemetryMode,
   options: RecordInitOptions = {},
 ): Promise<void> {
   if (isTelemetryDisabled()) {
-    // Opt-out is absolute: no install id minted, no notice. The user-requested
-    // file still gets an honest record that nothing was sent.
+    // Opt-out is absolute: no install id minted. The user-requested file still
+    // gets an honest record that nothing was sent.
     await writeTelemetryFile(options.telemetryFile, {
       disabled: true,
       sent: false,
@@ -229,15 +265,11 @@ export async function recordInit(
   }
 
   try {
-    const { id, isNew } = await getOrCreateInstallId();
-
-    if (isNew) {
-      process.stderr.write(FIRST_RUN_NOTICE);
-    }
+    const { id } = await getOrCreateInstallId();
 
     const event: InitEvent = {
       distinctId: id,
-      event: "openwiki_init",
+      event: `${TELEMETRY_INIT_EVENT}_${mode}`,
       properties: {
         mode,
         // Keep the event anonymous. No PostHog person profile, cheapest tier.
