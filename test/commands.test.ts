@@ -264,3 +264,59 @@ describe("shouldRunNonInteractively", () => {
     );
   });
 });
+
+describe("parseCommand — --telemetry-file", () => {
+  test("populates telemetryFile from a space-separated value", () => {
+    const result = parseCommand([
+      "code",
+      "--init",
+      "--telemetry-file",
+      "/tmp/t.json",
+    ]);
+
+    expect(result.kind).toBe("run");
+    if (result.kind === "run") {
+      expect(result.telemetryFile).toBe("/tmp/t.json");
+    }
+  });
+
+  test("populates telemetryFile from an =value", () => {
+    const result = parseCommand([
+      "personal",
+      "--init",
+      "--telemetry-file=/tmp/t.json",
+    ]);
+
+    expect(result.kind).toBe("run");
+    if (result.kind === "run") {
+      expect(result.telemetryFile).toBe("/tmp/t.json");
+    }
+  });
+
+  test("errors when the value is missing", () => {
+    const result = parseCommand(["personal", "--init", "--telemetry-file"]);
+
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.message).toContain("requires a path");
+    }
+  });
+
+  test("errors on an empty =value", () => {
+    const result = parseCommand(["personal", "--init", "--telemetry-file="]);
+
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.message).toContain("requires a path");
+    }
+  });
+
+  test("defaults telemetryFile to null when absent", () => {
+    const result = parseCommand(["personal", "--init"]);
+
+    expect(result.kind).toBe("run");
+    if (result.kind === "run") {
+      expect(result.telemetryFile).toBeNull();
+    }
+  });
+});

@@ -11,7 +11,7 @@ const TEST_HOME = path.join(os.tmpdir(), "openwiki-telemetry-test");
 const INSTALL_ID_PATH = path.join(TEST_HOME, "install-id");
 const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
 
-vi.mock("./openwiki-home.js", () => ({
+vi.mock("../src/openwiki-home.ts", () => ({
   openWikiHomeDir: TEST_HOME,
   ensureOpenWikiHome: vi.fn(async () => {
     await mkdir(TEST_HOME, { recursive: true, mode: 0o700 });
@@ -36,13 +36,13 @@ vi.mock("posthog-node", () => ({
   }),
 }));
 
-const { ensureOpenWikiHome } = await import("./openwiki-home.js");
+const { ensureOpenWikiHome } = await import("../src/openwiki-home.ts");
 const {
   getOrCreateInstallId,
   initTelemetryMode,
   isTelemetryDisabled,
   recordInit,
-} = await import("./telemetry.js");
+} = await import("../src/telemetry.ts");
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
