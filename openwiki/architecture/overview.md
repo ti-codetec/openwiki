@@ -1,3 +1,10 @@
+---
+type: Architecture
+title: Architecture overview
+description: "OpenWiki has a small but layered architecture:"
+timestamp: 2026-07-10T20:07:34.372Z
+---
+
 # Architecture overview
 
 OpenWiki has a small but layered architecture:

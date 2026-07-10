@@ -1,3 +1,10 @@
+---
+type: Agent
+title: Agent workflow
+description: The documentation agent is implemented in `src/agent/`.
+timestamp: 2026-07-10T20:07:34.372Z
+---
+
 # Agent workflow
 
 The documentation agent is implemented in `src/agent/`. It takes a command (`chat`, `init`, or `update`), gathers repository context, builds prompts, runs a DeepAgents session, and records successful update metadata — but only if the documentation content actually changed.

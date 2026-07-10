@@ -1,3 +1,12 @@
+---
+type: Cli
+title: CLI usage
+description: OpenWiki ships as a single `openwiki` binary and is intended to
+  work both as an interactive terminal app and as a one-shot documentation
+  runner.
+timestamp: 2026-07-10T20:07:34.372Z
+---
+
 # CLI usage
 
 OpenWiki ships as a single `openwiki` binary and is intended to work both as an interactive terminal app and as a one-shot documentation runner.

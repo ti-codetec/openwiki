@@ -1,3 +1,11 @@
+---
+type: Operations
+title: Credentials and updates
+description: "OpenWiki has four operational concerns that matter for both users
+  and maintainers:"
+timestamp: 2026-07-10T20:07:34.372Z
+---
+
 # Credentials and updates
 
 OpenWiki has four operational concerns that matter for both users and maintainers:
