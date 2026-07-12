@@ -16,6 +16,11 @@ export const OPENAI_CHATGPT_EMAIL_ENV_KEY = "OPENAI_CHATGPT_EMAIL";
 export const OPENAI_CHATGPT_PLAN_ENV_KEY = "OPENAI_CHATGPT_PLAN";
 export const ANTHROPIC_API_KEY_ENV_KEY = "ANTHROPIC_API_KEY";
 export const ANTHROPIC_BASE_URL_ENV_KEY = "ANTHROPIC_BASE_URL";
+export const CLAUDE_OAUTH_ACCESS_TOKEN_ENV_KEY = "CLAUDE_OAUTH_ACCESS_TOKEN";
+export const CLAUDE_OAUTH_REFRESH_TOKEN_ENV_KEY = "CLAUDE_OAUTH_REFRESH_TOKEN";
+export const CLAUDE_OAUTH_EXPIRES_AT_ENV_KEY = "CLAUDE_OAUTH_EXPIRES_AT";
+export const CLAUDE_OAUTH_EMAIL_ENV_KEY = "CLAUDE_OAUTH_EMAIL";
+export const CLAUDE_OAUTH_PLAN_ENV_KEY = "CLAUDE_OAUTH_PLAN";
 export const OPENROUTER_API_KEY_ENV_KEY = "OPENROUTER_API_KEY";
 export const OPENWIKI_PROVIDER_ENV_KEY = "OPENWIKI_PROVIDER";
 export const OPENWIKI_MODEL_ID_ENV_KEY = "OPENWIKI_MODEL_ID";
@@ -56,6 +61,7 @@ export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export type OpenWikiProvider =
   | "anthropic"
   | "baseten"
+  | "claude-oauth"
   | "fireworks"
   | "nvidia"
   | "openai"
@@ -117,6 +123,7 @@ export const SELECTABLE_OPENWIKI_PROVIDERS = [
   "openai",
   "openai-chatgpt",
   "anthropic",
+  "claude-oauth",
   "openrouter",
   "openai-compatible",
   "fireworks",
@@ -194,6 +201,16 @@ export const PROVIDER_CONFIGS: Record<OpenWikiProvider, ProviderConfig> = {
       { id: "claude-haiku-4-5", label: "Haiku" },
       { id: "claude-sonnet-5", label: "Sonnet" },
       { id: "claude-opus-4-8", label: "Opus" },
+    ],
+  },
+  "claude-oauth": {
+    apiKeyEnvKey: CLAUDE_OAUTH_ACCESS_TOKEN_ENV_KEY,
+    authMethod: "oauth",
+    label: "Anthropic (Claude login)",
+    modelOptions: [
+      { id: "claude-opus-4-8", label: "Opus" },
+      { id: "claude-sonnet-5", label: "Sonnet" },
+      { id: "claude-haiku-4-5", label: "Haiku" },
     ],
   },
   openrouter: {
@@ -317,6 +334,10 @@ export function isValidProvider(value: string): value is OpenWikiProvider {
 export function resolveConfiguredProvider(
   env: NodeJS.ProcessEnv = process.env,
 ): OpenWikiProvider {
+  // OAuth providers (`openai-chatgpt`, `claude-oauth`) are deliberately absent
+  // from the key-priority fallback below: they are only ever selected via an
+  // explicit OPENWIKI_PROVIDER, which the wizard writes after a login. A bare
+  // access token in the environment must not silently switch the provider.
   return (
     normalizeProvider(env[OPENWIKI_PROVIDER_ENV_KEY]) ??
     (env[OPENAI_API_KEY_ENV_KEY]

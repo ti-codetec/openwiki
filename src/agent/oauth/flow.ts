@@ -37,7 +37,36 @@ export function parseManualCallbackInput(input: string): {
       state: params.get("state") ?? undefined,
     };
   }
-  return { code: trimmed.length > 0 ? trimmed : undefined, state: undefined };
+  if (trimmed.length === 0) {
+    return { code: undefined, state: undefined };
+  }
+  // Claude's manual copy flow presents the value as `<code>#<state>`, so a bare
+  // paste can carry the state after a `#`. Split it off; an auth code never
+  // contains `#` itself, so this is safe for providers that hand back a plain
+  // code (state stays undefined).
+  const [code, state] = trimmed.split("#");
+  return { code, state: state ?? undefined };
+}
+
+/**
+ * Extracts a short, safe error detail from a failed token response. OAuth token
+ * endpoints return `{ error, error_description }` on failure; those are error
+ * codes, not credentials, so they are safe to surface. Never includes the raw
+ * body wholesale (it could echo request params) and is length-capped.
+ */
+async function describeTokenError(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as {
+      error?: unknown;
+      error_description?: unknown;
+    };
+    const parts = [body.error, body.error_description]
+      .filter((part): part is string => typeof part === "string")
+      .join(": ");
+    return parts ? `: ${parts.slice(0, 200)}` : "";
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -62,7 +91,7 @@ async function postToken(
   });
   if (!res.ok) {
     throw new Error(
-      `Token request failed (${res.status}). Try signing in again.`,
+      `Token request failed (${res.status})${await describeTokenError(res)}. Try signing in again.`,
     );
   }
   const json = (await res.json()) as Partial<OAuthTokenResponse>;
@@ -161,13 +190,20 @@ export async function runOAuthLogin(
     server.on("error", fail);
   });
 
-  return postToken(spec, {
+  const tokenParams: Record<string, string> = {
     grant_type: "authorization_code",
     client_id: spec.clientId,
     code,
     code_verifier: verifier,
     redirect_uri: redirectUri,
-  });
+  };
+  // Anthropic's token endpoint requires the authorize-time `state` echoed back
+  // in the exchange body (non-standard); opaque to providers that don't. The
+  // generated `state` is validated to match the callback/manual state above.
+  if (spec.sendStateInTokenExchange) {
+    tokenParams.state = state;
+  }
+  return postToken(spec, tokenParams);
 }
 
 /**

@@ -32,7 +32,7 @@ import {
   type CredentialDiagnostic,
 } from "./env.js";
 import { createOpenWikiThreadId, runOpenWikiAgent } from "./agent/index.js";
-import { formatChatGptAccountFromEnv } from "./agent/openai-chatgpt-oauth.js";
+import { getOAuthAdapter } from "./agent/oauth/index.js";
 import { getErrorMessage, sanitizeDiagnosticText } from "./diagnostics.js";
 import { stripHtmlTags } from "./utils.js";
 import {
@@ -985,10 +985,8 @@ function Header({
   );
   const configuredProvider = resolveConfiguredProvider();
   const displayProvider = getProviderLabel(configuredProvider);
-  const chatGptAccount =
-    configuredProvider === "openai-chatgpt"
-      ? formatChatGptAccountFromEnv()
-      : null;
+  const oauthAccount =
+    getOAuthAdapter(configuredProvider)?.formatAccountFromEnv();
   const displayDirectory = sanitizeHeaderValue(
     formatCwd(process.cwd()),
     Math.max(8, terminalColumns - 17),
@@ -1007,10 +1005,10 @@ function Header({
           <Text color="gray">v{OPENWIKI_VERSION}</Text>{" "}
           <Text color="gray">provider: </Text>
           <Text color="white">{displayProvider}</Text>{" "}
-          {chatGptAccount ? (
+          {oauthAccount ? (
             <>
               <Text color="gray">account: </Text>
-              <Text color="white">{chatGptAccount}</Text>{" "}
+              <Text color="white">{oauthAccount}</Text>{" "}
             </>
           ) : null}
           <Text color="gray">model: </Text>
@@ -1058,10 +1056,10 @@ function Header({
           <Text color="gray">provider: </Text>
           <Text color="white">{displayProvider}</Text>
         </Text>
-        {chatGptAccount ? (
+        {oauthAccount ? (
           <Text>
             <Text color="gray">account: </Text>
-            <Text color="white">{chatGptAccount}</Text>
+            <Text color="white">{oauthAccount}</Text>
           </Text>
         ) : null}
         <Text>
@@ -1888,7 +1886,7 @@ function ChatInput({
 
     if (provider === null) {
       setError(
-        "Enter a valid provider: openai, openrouter, baseten, fireworks, nvidia, or anthropic.",
+        "Enter a valid provider: openai, openai-chatgpt, anthropic, claude-oauth, openrouter, openai-compatible, baseten, fireworks, or nvidia.",
       );
       return;
     }

@@ -19,14 +19,15 @@ import { isFileNotFoundError } from "../fs-errors.js";
 import { openWikiLocalWikiDir } from "../openwiki-home.js";
 import { OpenWikiLocalShellBackend } from "./docs-only-backend.js";
 import {
+  CLAUDE_API_BASE_URL,
+  CLAUDE_OAUTH_BETA,
   CODEX_ORIGINATOR,
   CODEX_RESPONSES_BASE_URL,
-  codexTokensToEnv,
+  createClaudeOAuthFetch,
   createCodexFetch,
-  isChatGptTokenExpired,
-  readCodexTokensFromEnv,
-  refreshChatGptTokens,
-} from "./openai-chatgpt-oauth.js";
+  getOAuthAdapter,
+  type OAuthAdapter,
+} from "./oauth/index.js";
 import { createSystemPrompt, createUserPrompt } from "./prompt.js";
 import type {
   OpenWikiCommand,
@@ -115,10 +116,11 @@ export async function runOpenWikiAgent(
   emitDebug(options, `credentials=${provider} key present`);
   ensureProviderBaseUrl(provider);
 
-  if (provider === "openai-chatgpt") {
+  const oauthAdapter = getOAuthAdapter(provider);
+  if (oauthAdapter) {
     // Refresh before the model is built, so `createModel` stays synchronous.
-    await ensureFreshChatGptTokens();
-    emitDebug(options, "chatgpt.token=fresh");
+    await ensureFreshOAuthTokens(oauthAdapter);
+    emitDebug(options, "oauth.token=fresh");
   }
 
   const modelId = resolveModelId(options, provider);
@@ -435,11 +437,11 @@ function createModel(
   }
 
   if (provider === "openai-chatgpt") {
-    // Already refreshed by `ensureFreshChatGptTokens()` before the run started.
-    const tokens = readCodexTokensFromEnv();
+    // Already refreshed by `ensureFreshOAuthTokens()` before the run started.
+    const tokens = getOAuthAdapter(provider)?.readTokensFromEnv();
 
     if (!tokens) {
-      throw new Error(CHATGPT_LOGIN_INCOMPLETE_MESSAGE);
+      throw new Error(OAUTH_LOGIN_INCOMPLETE_MESSAGE);
     }
 
     // Reuse LangChain's existing ChatOpenAI Responses-API integration (correct
@@ -461,11 +463,34 @@ function createModel(
       configuration: {
         baseURL: CODEX_RESPONSES_BASE_URL,
         defaultHeaders: {
-          "chatgpt-account-id": tokens.accountId,
+          "chatgpt-account-id": tokens.extra.accountId,
           originator: CODEX_ORIGINATOR,
           "OpenAI-Beta": "responses=experimental",
         },
         fetch: createCodexFetch(modelId),
+      },
+    });
+  }
+
+  if (provider === "claude-oauth") {
+    // Already refreshed by `ensureFreshOAuthTokens()` before the run started.
+    const tokens = getOAuthAdapter(provider)?.readTokensFromEnv();
+
+    if (!tokens) {
+      throw new Error(OAUTH_LOGIN_INCOMPLETE_MESSAGE);
+    }
+
+    // The custom fetch is the guarantee that `Authorization: Bearer` and the
+    // OAuth beta header land on every request, regardless of SDK defaults. The
+    // `apiKey` is required by `ChatAnthropic` but is overridden by that fetch.
+    return new ChatAnthropic({
+      model: modelId,
+      apiKey: tokens.access,
+      anthropicApiUrl: CLAUDE_API_BASE_URL,
+      ...retryOptions,
+      clientOptions: {
+        defaultHeaders: { "anthropic-beta": CLAUDE_OAUTH_BETA },
+        fetch: createClaudeOAuthFetch(tokens.access),
       },
     });
   }
@@ -495,29 +520,31 @@ function createModel(
   });
 }
 
-const CHATGPT_LOGIN_INCOMPLETE_MESSAGE =
-  "ChatGPT login is incomplete. Run `openwiki code --init` or `openwiki personal --init` to sign in with your ChatGPT account.";
+export const OAUTH_LOGIN_INCOMPLETE_MESSAGE =
+  "OAuth login is incomplete. Run `openwiki code --init` or `openwiki personal --init` to sign in with your provider account.";
 
 /**
- * Refreshes the persisted ChatGPT OAuth tokens once at startup when they are
+ * Refreshes the persisted OAuth tokens once at startup when they are
  * expired/near-expiry, writing the rotated tokens back to `~/.openwiki/.env`
  * (which also updates `process.env`, so `createModel` can stay synchronous).
  * This is a short-lived CLI process, so a single refresh-at-startup is enough:
  * there is no background refresh loop.
  */
-async function ensureFreshChatGptTokens(): Promise<void> {
-  const tokens = readCodexTokensFromEnv();
+export async function ensureFreshOAuthTokens(
+  adapter: OAuthAdapter,
+): Promise<void> {
+  const tokens = adapter.readTokensFromEnv();
 
   if (!tokens) {
-    throw new Error(CHATGPT_LOGIN_INCOMPLETE_MESSAGE);
+    throw new Error(OAUTH_LOGIN_INCOMPLETE_MESSAGE);
   }
 
-  if (!isChatGptTokenExpired(tokens.expiresAtMs)) {
+  if (!adapter.isExpired(tokens.expiresAtMs)) {
     return;
   }
 
   await saveOpenWikiEnv(
-    codexTokensToEnv(await refreshChatGptTokens(tokens.refresh)),
+    adapter.tokensToEnv(await adapter.refresh(tokens.refresh)),
   );
 }
 

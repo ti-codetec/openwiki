@@ -167,6 +167,13 @@ export interface OAuthFlowSpec {
    * Extra query params appended to the authorize URL.
    */
   extraAuthorizeParams?: Record<string, string>;
+
+  /**
+   * When true, the authorize-time `state` is echoed back in the
+   * authorization_code token-exchange body. Anthropic's token endpoint requires
+   * this (non-standard); standard OAuth providers (e.g. OpenAI/Codex) omit it.
+   */
+  sendStateInTokenExchange?: boolean;
 }
 
 /**

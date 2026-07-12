@@ -9,11 +9,6 @@ import {
 } from "../src/agent/oauth/token-store.ts";
 import { decodeJwtPayload } from "../src/agent/oauth/jwt.ts";
 import { openaiChatgptAdapter } from "../src/agent/oauth/openai-chatgpt.ts";
-import {
-  type CodexTokens,
-  codexTokensToEnv,
-  readCodexTokensFromEnv,
-} from "../src/agent/openai-chatgpt-oauth.ts";
 import type { OAuthEnvKeys, OAuthTokens } from "../src/agent/oauth/types.ts";
 
 /** Encodes an object as the payload segment of an unsigned JWT-shaped string. */
@@ -50,6 +45,19 @@ describe("parseManualCallbackInput", () => {
     expect(parseManualCallbackInput("  ac_123  ")).toEqual({
       code: "ac_123",
       state: undefined,
+    });
+  });
+
+  test("splits a bare `code#state` paste (Claude manual copy flow)", () => {
+    // Claude's copy-the-code page hands back `<code>#<state>`; the `#state`
+    // suffix must not be sent as part of the authorization code.
+    expect(parseManualCallbackInput("ac_123#st_456")).toEqual({
+      code: "ac_123",
+      state: "st_456",
+    });
+    expect(parseManualCallbackInput("  ac_123#st_456  ")).toEqual({
+      code: "ac_123",
+      state: "st_456",
     });
   });
 
@@ -176,7 +184,7 @@ describe("token env round-trip (generic, with a required extra)", () => {
   });
 });
 
-describe("openaiChatgptAdapter env contract matches the legacy Codex module", () => {
+describe("openaiChatgptAdapter env contract", () => {
   const oauthTokens: OAuthTokens = {
     access: "access-1",
     refresh: "refresh-1",
@@ -185,51 +193,47 @@ describe("openaiChatgptAdapter env contract matches the legacy Codex module", ()
     identity: { email: "dev@example.com", plan: "plus" },
   };
 
-  const codexTokens: CodexTokens = {
-    access: "access-1",
-    refresh: "refresh-1",
-    expiresAtMs: 1_700_000_000_000,
-    accountId: "acct_1",
-    email: "dev@example.com",
-    planType: "plus",
+  // The exact env keys the adapter must persist under (the contract the Codex
+  // backend and the wizard both depend on).
+  const fullEnv = {
+    OPENAI_CHATGPT_ACCESS_TOKEN: "access-1",
+    OPENAI_CHATGPT_REFRESH_TOKEN: "refresh-1",
+    OPENAI_CHATGPT_EXPIRES_AT: "1700000000000",
+    OPENAI_CHATGPT_ACCOUNT_ID: "acct_1",
+    OPENAI_CHATGPT_EMAIL: "dev@example.com",
+    OPENAI_CHATGPT_PLAN: "plus",
   };
 
-  test("tokensToEnv writes the same env keys as codexTokensToEnv", () => {
-    expect(openaiChatgptAdapter.tokensToEnv(oauthTokens)).toEqual(
-      codexTokensToEnv(codexTokens),
+  test("tokensToEnv writes the OPENAI_CHATGPT_* keys", () => {
+    expect(openaiChatgptAdapter.tokensToEnv(oauthTokens)).toEqual(fullEnv);
+  });
+
+  test("tokensToEnv omits email/plan when the identity is absent", () => {
+    const env = openaiChatgptAdapter.tokensToEnv({
+      ...oauthTokens,
+      identity: { email: undefined, plan: undefined },
+    });
+
+    expect(env).not.toHaveProperty("OPENAI_CHATGPT_EMAIL");
+    expect(env).not.toHaveProperty("OPENAI_CHATGPT_PLAN");
+  });
+
+  test("readTokensFromEnv reads back what tokensToEnv wrote", () => {
+    expect(openaiChatgptAdapter.readTokensFromEnv(fullEnv)).toEqual(
+      oauthTokens,
     );
   });
 
-  test("tokensToEnv omits email/plan identically when they are absent", () => {
-    expect(
-      openaiChatgptAdapter.tokensToEnv({
-        ...oauthTokens,
-        identity: { email: undefined, plan: undefined },
-      }),
-    ).toEqual(
-      codexTokensToEnv({ ...codexTokens, email: null, planType: null }),
-    );
-  });
-
-  test("readTokensFromEnv reads what codexTokensToEnv wrote", () => {
-    const env = codexTokensToEnv(codexTokens);
-
-    expect(openaiChatgptAdapter.readTokensFromEnv(env)).toEqual(oauthTokens);
-  });
-
-  test("readTokensFromEnv rejects the same incomplete env sets as the legacy reader", () => {
+  test("readTokensFromEnv rejects an env set missing a required field", () => {
     for (const key of [
       "OPENAI_CHATGPT_ACCESS_TOKEN",
       "OPENAI_CHATGPT_REFRESH_TOKEN",
       "OPENAI_CHATGPT_ACCOUNT_ID",
     ]) {
-      const env: NodeJS.ProcessEnv = codexTokensToEnv(codexTokens);
+      const env: NodeJS.ProcessEnv = { ...fullEnv };
       delete env[key];
 
-      // The generic reader returns undefined where the legacy reader returned
-      // null; both agree the env is unusable.
       expect(openaiChatgptAdapter.readTokensFromEnv(env)).toBeUndefined();
-      expect(readCodexTokensFromEnv(env)).toBeNull();
     }
   });
 });

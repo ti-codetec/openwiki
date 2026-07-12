@@ -17,8 +17,6 @@ import {
   isValidModelId,
   normalizeProvider,
   normalizeModelId,
-  OPENAI_CHATGPT_EMAIL_ENV_KEY,
-  OPENAI_CHATGPT_PLAN_ENV_KEY,
   OPENWIKI_GOOGLE_CLIENT_ID_ENV_KEY,
   OPENWIKI_GOOGLE_CLIENT_SECRET_ENV_KEY,
   OPENWIKI_MODEL_ID_ENV_KEY,
@@ -32,14 +30,11 @@ import {
   SELECTABLE_OPENWIKI_PROVIDERS,
 } from "./constants.js";
 import {
-  type ChatGptLoginHandle,
-  type CodexTokens,
-  codexTokensToEnv,
-  formatChatGptAccount,
-  isChatGptTokenExpired,
-  loginWithChatGPT,
-  readCodexTokensFromEnv,
-} from "./agent/openai-chatgpt-oauth.js";
+  formatAccount,
+  getOAuthAdapter,
+  type OAuthLoginHandle,
+  type OAuthTokens,
+} from "./agent/oauth/index.js";
 import type { AuthProviderId } from "./auth/types.js";
 import type { OpenWikiRunMode } from "./commands.js";
 import type { ConnectorId } from "./connectors/types.js";
@@ -381,7 +376,7 @@ export function needsCredentialSetup(
  */
 function needsCredentialStep(provider: OpenWikiProvider): boolean {
   return providerUsesOAuth(provider)
-    ? !hasValidStoredToken()
+    ? !hasValidStoredToken(provider)
     : !process.env[getProviderApiKeyEnvKey(provider)];
 }
 
@@ -390,10 +385,19 @@ function credentialStep(provider: OpenWikiProvider): PromptStep {
   return providerUsesOAuth(provider) ? "oauth-login" : "api-key";
 }
 
-function hasValidStoredToken(env: NodeJS.ProcessEnv = process.env): boolean {
-  const tokens = readCodexTokensFromEnv(env);
+function hasValidStoredToken(
+  provider: OpenWikiProvider,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const adapter = getOAuthAdapter(provider);
 
-  return tokens !== null && !isChatGptTokenExpired(tokens.expiresAtMs);
+  if (!adapter) {
+    return false;
+  }
+
+  const tokens = adapter.readTokensFromEnv(env);
+
+  return tokens !== undefined && !adapter.isExpired(tokens.expiresAtMs);
 }
 
 function needsBaseUrlStep(provider: OpenWikiProvider): boolean {
@@ -412,25 +416,28 @@ function isBaseUrlConfigured(provider: OpenWikiProvider): boolean {
 
 function isCredentialConfigured(provider: OpenWikiProvider): boolean {
   return providerUsesOAuth(provider)
-    ? hasValidStoredToken()
+    ? hasValidStoredToken(provider)
     : Boolean(process.env[getProviderApiKeyEnvKey(provider)]);
 }
 
-function getCredentialSetupDetail(
+export function getCredentialSetupDetail(
   provider: OpenWikiProvider,
-  tokens: CodexTokens | null = null,
+  tokens: OAuthTokens | undefined = undefined,
 ): string {
   if (providerUsesOAuth(provider)) {
+    const label = getProviderLabel(provider);
+
     if (!isCredentialConfigured(provider) && !tokens) {
-      return "sign in with your ChatGPT account";
+      return `sign in with your ${label} account`;
     }
 
-    const account = formatChatGptAccount(
-      tokens?.email ?? process.env[OPENAI_CHATGPT_EMAIL_ENV_KEY] ?? null,
-      tokens?.planType ?? process.env[OPENAI_CHATGPT_PLAN_ENV_KEY] ?? null,
-    );
+    // Prefer the just-logged-in tokens (not yet persisted to the environment);
+    // otherwise read the identity the adapter persisted on a previous run.
+    const account = tokens
+      ? formatAccount(tokens.identity.email, tokens.identity.plan)
+      : getOAuthAdapter(provider)?.formatAccountFromEnv();
 
-    return account ? `signed in as ${account}` : "signed in with ChatGPT";
+    return account ? `signed in as ${account}` : `signed in with ${label}`;
   }
 
   return isCredentialConfigured(provider)
@@ -532,13 +539,15 @@ export function InitSetup({
   const [notice, setNotice] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isAuthRunning, setIsAuthRunning] = useState(false);
-  const [oauthTokens, setOauthTokens] = useState<CodexTokens | null>(null);
+  const [oauthTokens, setOauthTokens] = useState<OAuthTokens | undefined>(
+    undefined,
+  );
   const [loginUrl, setLoginUrl] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginAttempt, setLoginAttempt] = useState(0);
   const [copied, setCopied] = useState(false);
   const [forceModelStep, setForceModelStep] = useState(false);
-  const loginHandleRef = useRef<ChatGptLoginHandle | null>(null);
+  const loginHandleRef = useRef<OAuthLoginHandle | null>(null);
 
   const activeSourceOptions = useMemo(
     () => getTemplateSourceOptions(getConfigModeId(onboardingConfig)),
@@ -664,7 +673,17 @@ export function InitSetup({
 
     void (async () => {
       try {
-        const tokens = await loginWithChatGPT(
+        const adapter = getOAuthAdapter(provider);
+
+        if (!adapter) {
+          setIsLoggingIn(false);
+          setError(
+            `${getProviderLabel(provider)} does not support OAuth login.`,
+          );
+          return;
+        }
+
+        const tokens = await adapter.login(
           (url) => {
             if (cancelled) {
               return;
@@ -1507,7 +1526,7 @@ export function InitSetup({
             ? codeRepoRoot
             : undefined,
         runIngestionNow,
-        savedApiKey: apiKey !== null || oauthTokens !== null,
+        savedApiKey: apiKey !== null || oauthTokens !== undefined,
         savedBaseUrl: baseUrl !== null,
         savedLangSmithKey: langSmithKey !== null && langSmithKey.length > 0,
         savedModelId: modelId !== null,
@@ -1557,7 +1576,7 @@ export function InitSetup({
     nextBaseUrl: string | null;
     nextLangSmithKey: string | null;
     nextModelId: string | null;
-    nextOAuthTokens?: CodexTokens | null;
+    nextOAuthTokens?: OAuthTokens | undefined;
     nextProvider: OpenWikiProvider;
     runMode: OpenWikiRunMode;
   };
@@ -1626,7 +1645,7 @@ export function InitSetup({
       mode: options.runMode,
       runIngestionNow: false,
       savedApiKey:
-        options.nextApiKey !== null || options.nextOAuthTokens != null,
+        options.nextApiKey !== null || options.nextOAuthTokens !== undefined,
       savedBaseUrl: options.nextBaseUrl !== null,
       savedLangSmithKey:
         options.nextLangSmithKey !== null &&
@@ -1660,7 +1679,11 @@ export function InitSetup({
       }
 
       if (nextOAuthTokens) {
-        Object.assign(updates, codexTokensToEnv(nextOAuthTokens));
+        const adapter = getOAuthAdapter(nextProvider);
+
+        if (adapter) {
+          Object.assign(updates, adapter.tokensToEnv(nextOAuthTokens));
+        }
       }
 
       if (nextBaseUrl !== null) {
@@ -1955,7 +1978,11 @@ export function InitSetup({
           detail={getProviderSetupDetail(provider)}
         />
         <SetupStep
-          label={providerUsesOAuth(provider) ? "ChatGPT login" : "Provider key"}
+          label={
+            providerUsesOAuth(provider)
+              ? `${getProviderLabel(provider)} login`
+              : "Provider key"
+          }
           state={
             isCredentialConfigured(provider) || oauthTokens
               ? "done"
@@ -2881,7 +2908,7 @@ function OAuthLoginPrompt({
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text bold color="cyan">
-        ChatGPT login
+        {getProviderLabel(provider)} login
       </Text>
       <Text>
         Sign in with your {getProviderLabel(provider)} account to authorize
@@ -2915,7 +2942,9 @@ function OAuthLoginPrompt({
           </Box>
         </Box>
       ) : (
-        <Text color="gray">Starting the ChatGPT login...</Text>
+        <Text color="gray">
+          Starting the {getProviderLabel(provider)} login...
+        </Text>
       )}
       <Text color="gray">
         {isLoggingIn
