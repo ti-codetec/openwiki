@@ -50,7 +50,7 @@ import {
   ONBOARDING_TEMPLATES,
   RUN_MODE_OPTIONS,
 } from "../../onboarding/setup.js";
-import { validateCronExpression } from "../../schedules.js";
+import { validateCronExpression } from "../../schedules/cron.js";
 
 /**
  * Renders the prompt UI for the active setup step: the current step's menu,

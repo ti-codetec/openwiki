@@ -5,15 +5,17 @@ import {
   saveOpenWikiOnboardingConfig,
 } from "../../onboarding/store.js";
 import {
+  type ConnectorScheduleStatus,
   deleteConnectorSchedules,
-  getSavedPowerScheduleStatus,
   listConnectorSchedules,
   pauseConnectorSchedules,
   resumeConnectorSchedules,
-  type ConnectorScheduleStatus,
-  type PowerScheduleStatus,
   type ScheduleMutationResult,
-} from "../../schedules.js";
+} from "../../schedules/connectors.js";
+import {
+  getSavedPowerScheduleStatus,
+  type PowerScheduleStatus,
+} from "../../schedules/power.js";
 
 /**
  * Runs the `openwiki cron` command: lists connector schedules, or applies a

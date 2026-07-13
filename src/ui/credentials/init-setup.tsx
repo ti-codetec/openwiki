@@ -60,9 +60,11 @@ import {
 import {
   CRON_FIELD_LABELS,
   getCronFields,
+  getSuggestedCronExpression,
   parseCronFieldPaste,
   sanitizeCronInputChunk,
-} from "../../config/cron.js";
+  validateCronExpression,
+} from "../../schedules/cron.js";
 import {
   getErrorMessage,
   getInputDisplayWidth,
@@ -119,12 +121,8 @@ import {
   ONBOARDING_TEMPLATES,
   RUN_MODE_OPTIONS,
 } from "../../onboarding/setup.js";
-import {
-  getSuggestedCronExpression,
-  installOpenWikiPowerSchedule,
-  installConnectorSchedule,
-  validateCronExpression,
-} from "../../schedules.js";
+import { installConnectorSchedule } from "../../schedules/connectors.js";
+import { installOpenWikiPowerSchedule } from "../../schedules/power.js";
 
 export type InitSetupResult = {
   mode: OpenWikiRunMode;

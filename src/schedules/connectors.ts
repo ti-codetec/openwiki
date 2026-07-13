@@ -1,69 +1,143 @@
-import { execFile } from "node:child_process";
 import { access, chmod, mkdir, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { CronExpressionParser } from "cron-parser";
-import cronstrue from "cronstrue";
-import { ensureOpenWikiHome, openWikiHomeDir } from "./openwiki-home.js";
-import type { ConnectorId } from "./connectors/types.js";
-import type { OpenWikiOnboardingConfig } from "./onboarding/store.js";
+import { ensureOpenWikiHome, openWikiHomeDir } from "../openwiki-home.js";
+import type { ConnectorId } from "../connectors/types.js";
+import type { OpenWikiOnboardingConfig } from "../onboarding/store.js";
+import {
+  getSingleCronNumber,
+  parseSimpleCronFields,
+  validateCronExpression,
+} from "./cron.js";
+import {
+  type PowerScheduleInstallResult,
+  reconcileOpenWikiPowerSchedule,
+} from "./power.js";
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_FIRST_HOUR = 2;
 
-export type CronValidationResult =
-  | {
-      description: string;
-      expression: string;
-      valid: true;
-    }
-  | {
-      error: string;
-      expression: string;
-      valid: false;
-    };
-
-export type ScheduleInstallResult = {
+/**
+ * The result of installing a connector ingestion schedule.
+ */
+export interface ScheduleInstallResult {
+  /**
+   * Human description of the installed cron schedule.
+   */
   description: string;
-  expression: string;
-  launchAgentPath?: string;
-  warning?: string;
-};
 
-export type ConnectorScheduleStatus = {
+  /**
+   * The normalized cron expression that was installed.
+   */
+  expression: string;
+
+  /**
+   * Path to the launchd plist that was written; absent on non-macOS platforms
+   * where native installation is skipped.
+   */
+  launchAgentPath?: string;
+
+  /**
+   * A note when the schedule was saved but not natively installed; absent when
+   * installation fully succeeded.
+   */
+  warning?: string;
+}
+
+/**
+ * The current status of a saved connector schedule, including whether its
+ * launchd agent is present and loaded.
+ */
+export interface ConnectorScheduleStatus {
+  /**
+   * The connector this schedule ingests, when scoped to one; absent for the
+   * combined "all" schedule.
+   */
   connectorId?: ConnectorId;
+
+  /**
+   * Human description of the cron schedule.
+   */
   description: string;
+
+  /**
+   * Display name shown for the schedule; absent when unnamed.
+   */
   displayName?: string;
+
+  /**
+   * The cron expression the schedule runs on.
+   */
   expression: string;
+
+  /**
+   * Whether the launchd agent is currently loaded (running).
+   */
   launchAgentLoaded: boolean;
+
+  /**
+   * Path to the launchd plist; absent when none was written.
+   */
   launchAgentPath?: string;
+
+  /**
+   * Whether the launchd plist file exists on disk.
+   */
   launchAgentPlistExists: boolean;
+
+  /**
+   * ISO timestamp of when the schedule was paused; absent when active.
+   */
   pausedAt?: string;
+
+  /**
+   * The source instance the schedule belongs to (`all` for the combined one).
+   */
   sourceInstanceId: string;
+
+  /**
+   * ISO timestamp of when the schedule was last updated.
+   */
   updatedAt: string;
+
+  /**
+   * A note about a partial or skipped install; absent when there is none.
+   */
   warning?: string;
-};
+}
 
-export type PowerScheduleInstallResult = {
-  days: string;
-  enabled: boolean;
-  sleepTime: string;
-  wakeTime: string;
-  warning?: string;
-};
-
-export type PowerScheduleStatus = PowerScheduleInstallResult & {
-  updatedAt: string;
-};
-
-export type ScheduleMutationResult = {
+/**
+ * The outcome of mutating schedules (pause/resume/delete): the updated config
+ * plus which connectors changed, which were skipped, and any warnings.
+ */
+export interface ScheduleMutationResult {
+  /**
+   * The onboarding config after the mutation.
+   */
   config: OpenWikiOnboardingConfig;
+
+  /**
+   * Ids of the connectors whose schedules were changed.
+   */
   connectorIds: string[];
+
+  /**
+   * The reconciled power schedule, when the mutation adjusted it.
+   */
   powerSchedule?: PowerScheduleInstallResult;
+
+  /**
+   * Ids of connectors that were left unchanged (e.g. already in the target
+   * state).
+   */
   skippedConnectorIds: string[];
+
+  /**
+   * Human warnings gathered while applying the mutation.
+   */
   warnings: string[];
-};
+}
 
 export type ScheduleTarget = ConnectorId | "all";
 
@@ -71,59 +145,11 @@ type CalendarInterval = Partial<
   Record<"Hour" | "Minute" | "Month" | "Day" | "Weekday", number>
 >;
 
-type RepeatScheduleTime = {
-  days: string;
-  minuteOfDay: number;
-};
-
-const PMSET_WAKE_OFFSET_MINUTES = 2;
-const PMSET_SLEEP_OFFSET_MINUTES = 30;
-const PMSET_DEFAULT_DAYS = "MTWRFSU";
-
-export function validateCronExpression(
-  expression: string,
-): CronValidationResult {
-  const normalizedExpression = normalizeCronExpression(expression);
-
-  if (!normalizedExpression) {
-    return {
-      error: "Enter a cron expression like 0 2 * * *.",
-      expression: normalizedExpression,
-      valid: false,
-    };
-  }
-
-  try {
-    CronExpressionParser.parse(normalizedExpression);
-    return {
-      description: describeCronExpression(normalizedExpression),
-      expression: normalizedExpression,
-      valid: true,
-    };
-  } catch (error) {
-    return {
-      error: error instanceof Error ? error.message : "Invalid cron schedule.",
-      expression: normalizedExpression,
-      valid: false,
-    };
-  }
-}
-
-export function describeCronExpression(expression: string): string {
-  return cronstrue.toString(expression, {
-    throwExceptionOnParseError: true,
-    use24HourTimeFormat: false,
-  });
-}
-
-export function getSuggestedCronExpression(
-  config: OpenWikiOnboardingConfig,
-): string {
-  return (
-    config.ingestionSchedule?.expression ?? `0 ${DEFAULT_FIRST_HOUR} * * *`
-  );
-}
-
+/**
+ * Installs a launchd agent that runs ingestion on the given cron schedule.
+ * Validates the expression first, and on non-macOS platforms (or expressions
+ * too complex for launchd) returns a saved-but-not-installed result.
+ */
 export async function installConnectorSchedule({
   connectorId,
   cronExpression,
@@ -193,6 +219,10 @@ export async function installConnectorSchedule({
   };
 }
 
+/**
+ * Lists the current ingestion schedules with their launchd load/existence
+ * status; empty when none is configured.
+ */
 export async function listConnectorSchedules(
   config: OpenWikiOnboardingConfig,
 ): Promise<ConnectorScheduleStatus[]> {
@@ -222,6 +252,10 @@ export async function listConnectorSchedules(
   ];
 }
 
+/**
+ * Pauses the ingestion schedule (unloading its launchd agent) and reconciles
+ * the power schedule. A no-op when there is nothing active to pause.
+ */
 export async function pauseConnectorSchedules(
   config: OpenWikiOnboardingConfig,
   target: ScheduleTarget,
@@ -262,6 +296,10 @@ export async function pauseConnectorSchedules(
   };
 }
 
+/**
+ * Resumes a paused ingestion schedule by reinstalling its launchd agent and
+ * reconciling the power schedule. A no-op when there is nothing paused.
+ */
 export async function resumeConnectorSchedules({
   config,
   cwd,
@@ -315,6 +353,10 @@ export async function resumeConnectorSchedules({
   };
 }
 
+/**
+ * Deletes the ingestion schedule, removing its launchd agent and plist, and
+ * reconciles the power schedule. A no-op when none is configured.
+ */
 export async function deleteConnectorSchedules(
   config: OpenWikiOnboardingConfig,
   target: ScheduleTarget,
@@ -343,179 +385,6 @@ export async function deleteConnectorSchedules(
       ? [reconciled.powerSchedule.warning]
       : [],
   };
-}
-
-export async function installOpenWikiPowerSchedule(
-  config: OpenWikiOnboardingConfig,
-): Promise<PowerScheduleInstallResult> {
-  const powerWindow = getPowerWindowForConfiguredSchedules(config);
-
-  if (!powerWindow) {
-    return {
-      days: PMSET_DEFAULT_DAYS,
-      enabled: false,
-      sleepTime: "",
-      wakeTime: "",
-      warning:
-        "Wake setup skipped because no saved schedules can be represented as a simple macOS repeat wake window.",
-    };
-  }
-
-  if (process.platform !== "darwin") {
-    return {
-      ...powerWindow,
-      enabled: false,
-      warning: "Wake setup is currently macOS-only.",
-    };
-  }
-
-  const pmsetArgs = [
-    "repeat",
-    "wakeorpoweron",
-    powerWindow.days,
-    powerWindow.wakeTime,
-    "sleep",
-    powerWindow.days,
-    powerWindow.sleepTime,
-  ];
-
-  try {
-    await execFileAsync("osascript", [
-      "-e",
-      `do shell script ${toAppleScriptString(
-        pmsetCommand(pmsetArgs),
-      )} with administrator privileges`,
-    ]);
-
-    return {
-      ...powerWindow,
-      enabled: true,
-      warning:
-        "macOS supports one repeat power schedule. OpenWiki updated it to cover the currently saved connector schedules.",
-    };
-  } catch (error) {
-    return {
-      ...powerWindow,
-      enabled: false,
-      warning: `Wake setup was not installed: ${getErrorMessage(error)}`,
-    };
-  }
-}
-
-export function getSavedPowerScheduleStatus(
-  config: OpenWikiOnboardingConfig,
-): PowerScheduleStatus | null {
-  const savedPmset = config.powerManagement?.pmset;
-
-  if (!savedPmset) {
-    return null;
-  }
-
-  return {
-    days: savedPmset.days,
-    enabled: savedPmset.enabled,
-    sleepTime: savedPmset.sleepTime,
-    updatedAt: savedPmset.updatedAt,
-    wakeTime: savedPmset.wakeTime,
-    warning: savedPmset.warning,
-  };
-}
-
-async function reconcileOpenWikiPowerSchedule(
-  config: OpenWikiOnboardingConfig,
-): Promise<{
-  config: OpenWikiOnboardingConfig;
-  powerSchedule?: PowerScheduleInstallResult;
-}> {
-  const savedPmset = config.powerManagement?.pmset;
-  if (!savedPmset) {
-    return { config };
-  }
-
-  if (!hasActiveIngestionSchedule(config)) {
-    if (!savedPmset.enabled) {
-      return { config };
-    }
-
-    const result = await cancelOpenWikiPowerSchedule();
-    return {
-      config: {
-        ...config,
-        powerManagement: {
-          ...config.powerManagement,
-          pmset: {
-            days: savedPmset.days,
-            enabled: false,
-            sleepTime: savedPmset.sleepTime,
-            updatedAt: new Date().toISOString(),
-            wakeTime: savedPmset.wakeTime,
-            warning: result.warning,
-          },
-        },
-      },
-      powerSchedule: result,
-    };
-  }
-
-  const result = await installOpenWikiPowerSchedule(config);
-  return {
-    config: {
-      ...config,
-      powerManagement: {
-        ...config.powerManagement,
-        pmset: {
-          days: result.days,
-          enabled: result.enabled,
-          sleepTime: result.sleepTime,
-          updatedAt: new Date().toISOString(),
-          wakeTime: result.wakeTime,
-          warning: result.warning,
-        },
-      },
-    },
-    powerSchedule: result,
-  };
-}
-
-async function cancelOpenWikiPowerSchedule(): Promise<PowerScheduleInstallResult> {
-  const disabledSchedule = {
-    days: "",
-    enabled: false,
-    sleepTime: "",
-    wakeTime: "",
-  };
-
-  if (process.platform !== "darwin") {
-    return {
-      ...disabledSchedule,
-      warning: "Wake setup is currently macOS-only.",
-    };
-  }
-
-  try {
-    await execFileAsync("osascript", [
-      "-e",
-      `do shell script ${toAppleScriptString(
-        pmsetCommand(["repeat", "cancel"]),
-      )} with administrator privileges`,
-    ]);
-
-    return {
-      ...disabledSchedule,
-      warning: "OpenWiki removed the macOS repeat wake/sleep schedule.",
-    };
-  } catch (error) {
-    return {
-      ...disabledSchedule,
-      warning: `Wake setup was not removed: ${getErrorMessage(error)}`,
-    };
-  }
-}
-
-function hasActiveIngestionSchedule(config: OpenWikiOnboardingConfig): boolean {
-  return Boolean(
-    config.ingestionSchedule && !config.ingestionSchedule.pausedAt,
-  );
 }
 
 function cloneOnboardingConfig(
@@ -562,10 +431,6 @@ function deriveLegacySources(
   }
 
   return sources;
-}
-
-function normalizeCronExpression(expression: string): string {
-  return expression.trim().replace(/\s+/gu, " ");
 }
 
 function parseLaunchdCalendarInterval(
@@ -616,171 +481,6 @@ function parseLaunchdCalendarInterval(
   }
 
   return interval;
-}
-
-function parseSimpleCronFields(expression: string): {
-  day: string;
-  hour: string;
-  minute: string;
-  month: string;
-  weekday: string;
-} | null {
-  const [minute, hour, day, month, weekday, ...extra] =
-    expression.split(/\s+/u);
-  if (!minute || !hour || !day || !month || !weekday || extra.length > 0) {
-    return null;
-  }
-
-  return {
-    day,
-    hour,
-    minute,
-    month,
-    weekday,
-  };
-}
-
-function getPowerWindowForConfiguredSchedules(
-  config: OpenWikiOnboardingConfig,
-): Omit<PowerScheduleInstallResult, "enabled" | "warning"> | null {
-  const parsedSchedules: RepeatScheduleTime[] = [];
-  const schedule = config.ingestionSchedule;
-
-  if (schedule && !schedule.pausedAt) {
-    const parsedSchedule = parseRepeatScheduleTime(schedule.expression);
-    if (parsedSchedule) {
-      parsedSchedules.push(parsedSchedule);
-    }
-  }
-
-  if (parsedSchedules.length === 0) {
-    return null;
-  }
-
-  const days = mergePmsetDays(parsedSchedules.map((schedule) => schedule.days));
-  const earliestMinute = Math.min(
-    ...parsedSchedules.map((schedule) => schedule.minuteOfDay),
-  );
-  const latestMinute = Math.max(
-    ...parsedSchedules.map((schedule) => schedule.minuteOfDay),
-  );
-  const wakeMinute = earliestMinute - PMSET_WAKE_OFFSET_MINUTES;
-  const sleepMinute = latestMinute + PMSET_SLEEP_OFFSET_MINUTES;
-
-  if (wakeMinute < 0 || sleepMinute >= 24 * 60) {
-    return null;
-  }
-
-  return {
-    days,
-    sleepTime: formatPmsetTime(sleepMinute),
-    wakeTime: formatPmsetTime(wakeMinute),
-  };
-}
-
-function parseRepeatScheduleTime(
-  expression: string,
-): RepeatScheduleTime | null {
-  const parsed = parseSimpleCronFields(expression);
-  if (!parsed) {
-    return null;
-  }
-
-  if (parsed.day !== "*" || parsed.month !== "*") {
-    return null;
-  }
-
-  const minute = getSingleCronNumber(parsed.minute, { max: 59, min: 0 });
-  const hour = getSingleCronNumber(parsed.hour, { max: 23, min: 0 });
-  if (minute === null || hour === null) {
-    return null;
-  }
-
-  const days = parsePmsetDays(parsed.weekday);
-  if (!days) {
-    return null;
-  }
-
-  return {
-    days,
-    minuteOfDay: hour * 60 + minute,
-  };
-}
-
-function parsePmsetDays(weekday: string): string | null {
-  if (weekday === "*") {
-    return PMSET_DEFAULT_DAYS;
-  }
-
-  const parsedWeekday = getSingleCronNumber(weekday, { max: 7, min: 0 });
-  if (parsedWeekday === null) {
-    return null;
-  }
-
-  return weekdayNumberToPmsetDay(parsedWeekday);
-}
-
-function weekdayNumberToPmsetDay(weekday: number): string {
-  switch (weekday === 7 ? 0 : weekday) {
-    case 0:
-      return "U";
-    case 1:
-      return "M";
-    case 2:
-      return "T";
-    case 3:
-      return "W";
-    case 4:
-      return "R";
-    case 5:
-      return "F";
-    case 6:
-      return "S";
-    default:
-      return "";
-  }
-}
-
-function mergePmsetDays(days: string[]): string {
-  const dayOrder = PMSET_DEFAULT_DAYS.split("");
-  const usedDays = new Set(days.flatMap((daySet) => daySet.split("")));
-  return dayOrder.filter((day) => usedDays.has(day)).join("");
-}
-
-function formatPmsetTime(minuteOfDay: number): string {
-  const hour = Math.floor(minuteOfDay / 60);
-  const minute = minuteOfDay % 60;
-  return `${hour.toString().padStart(2, "0")}:${minute
-    .toString()
-    .padStart(2, "0")}:00`;
-}
-
-function pmsetCommand(args: string[]): string {
-  return ["pmset", ...args].map(toShellSingleQuotedArg).join(" ");
-}
-
-function toShellSingleQuotedArg(value: string): string {
-  return `'${value.replace(/'/gu, "'\\''")}'`;
-}
-
-function toAppleScriptString(value: string): string {
-  return `"${value.replace(/\\/gu, "\\\\").replace(/"/gu, '\\"')}"`;
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function getSingleCronNumber(
-  field: string | undefined,
-  { max, min }: { max: number; min: number },
-): number | null {
-  if (!field || !/^\d+$/u.test(field)) {
-    return null;
-  }
-
-  const value = Number(field);
-  return Number.isInteger(value) && value >= min && value <= max ? value : null;
 }
 
 function createLaunchAgentPlist({

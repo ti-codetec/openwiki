@@ -4,7 +4,7 @@ import {
   getProviderLabel,
   type OpenWikiProvider,
 } from "../../providers/config.js";
-import { CRON_FIELD_LABELS, getCronFields } from "../../config/cron.js";
+import { CRON_FIELD_LABELS, getCronFields } from "../../schedules/cron.js";
 import {
   formatSecretInputDisplay,
   formatTerminalHyperlink,
