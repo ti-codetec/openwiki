@@ -15,8 +15,11 @@ import {
 } from "../constants.js";
 import { openWikiEnvPath } from "../env.js";
 import {
+  createEmptyOnboardingConfig,
+  isOnboardingComplete,
   isOpenWikiOnboardingCompleteSync,
   isRepositoryCodeOnboardingCompleteSync,
+  type OpenWikiOnboardingConfig,
 } from "../onboarding.js";
 import {
   getProviderApiKeyEnvKey,
@@ -173,4 +176,228 @@ export function findNearestGitRepoRoot(startPath: string): string | null {
 
     currentPath = parentPath;
   }
+}
+
+/**
+ * The identifier of one prompt in the interactive setup wizard. The step machine
+ * (`getInitialStep` / `getNextStepAfter*`) returns these to tell the UI which
+ * prompt to render next; the machine returns `null` when setup is complete.
+ */
+export type PromptStep =
+  | "api-key"
+  | "base-url"
+  | "code-repo-confirm"
+  | "code-repo-path"
+  | "final"
+  | "langsmith"
+  | "model"
+  | "oauth-login"
+  | "provider"
+  | "run-mode"
+  | "source-auth"
+  | "global-cron-custom"
+  | "global-cron-mode"
+  | "global-power-mode"
+  | "source-description"
+  | "source-description-custom"
+  | "source-menu"
+  | "source-path"
+  | "source-confirm-continue"
+  | "source-secret"
+  | "template"
+  | "wiki-goal";
+
+/**
+ * The step that collects a provider's primary credential: the ChatGPT OAuth
+ * login for OAuth providers, or a pasted API key for everyone else.
+ */
+export function credentialStep(provider: OpenWikiProvider): PromptStep {
+  return providerUsesOAuth(provider) ? "oauth-login" : "api-key";
+}
+
+/**
+ * The onboarding mode's stable id, preferring the current `modeId` and falling
+ * back to the legacy `templateId`; `undefined` when neither has been chosen.
+ */
+export function getConfigModeId(
+  config: OpenWikiOnboardingConfig,
+): string | undefined {
+  return config.modeId ?? config.templateId;
+}
+
+/**
+ * The onboarding mode's display name, preferring the current `modeName` and
+ * falling back to the legacy `templateName`; `undefined` when neither is set.
+ */
+export function getConfigModeName(
+  config: OpenWikiOnboardingConfig,
+): string | undefined {
+  return config.modeName ?? config.templateName;
+}
+
+/**
+ * True when the onboarding config selects `code` mode (documenting a repo)
+ * rather than `personal` mode.
+ */
+export function isCodeMode(config: OpenWikiOnboardingConfig): boolean {
+  return getConfigModeId(config) === "code";
+}
+
+/**
+ * The first wizard step to show when setup opens: the earliest prerequisite that
+ * is not yet satisfied (provider, credential, base URL, model, LangSmith, then
+ * mode-specific onboarding), or `null` when nothing needs collecting.
+ */
+export function getInitialStep(
+  modelIdOverride: string | null,
+  provider: OpenWikiProvider,
+  onboardingConfig: OpenWikiOnboardingConfig = createEmptyOnboardingConfig(),
+  mode: OpenWikiRunMode = "code",
+  allowModeSelection = false,
+): PromptStep | null {
+  if (allowModeSelection) {
+    return "run-mode";
+  }
+
+  if (!hasValidConfiguredProvider()) {
+    return "provider";
+  }
+
+  if (needsCredentialStep(provider)) {
+    return credentialStep(provider);
+  }
+
+  if (needsBaseUrlStep(provider)) {
+    return "base-url";
+  }
+
+  if (
+    modelIdOverride === null &&
+    process.env[OPENWIKI_MODEL_ID_ENV_KEY] === undefined
+  ) {
+    return "model";
+  }
+
+  if (process.env.LANGSMITH_API_KEY === undefined) {
+    return "langsmith";
+  }
+
+  if (mode === "code" && !isOnboardingComplete(onboardingConfig)) {
+    return "code-repo-confirm";
+  }
+
+  if (!getConfigModeId(onboardingConfig)) {
+    return "template";
+  }
+
+  if (!onboardingConfig.wikiGoal) {
+    return "wiki-goal";
+  }
+
+  if (!isCodeMode(onboardingConfig) && !onboardingConfig.ingestionSchedule) {
+    return "global-cron-mode";
+  }
+
+  if (!isOnboardingComplete(onboardingConfig)) {
+    return "source-menu";
+  }
+
+  return null;
+}
+
+/**
+ * The step to advance to after a provider is chosen: the provider's own
+ * credential step if one is still needed, otherwise the same downstream routing
+ * as `getNextStepAfterApiKey`.
+ */
+export function getNextStepAfterProvider(
+  provider: OpenWikiProvider,
+  modelIdOverride: string | null,
+  onboardingConfig: OpenWikiOnboardingConfig = createEmptyOnboardingConfig(),
+  mode: OpenWikiRunMode = "code",
+  forceModelStep = false,
+): PromptStep | null {
+  if (needsCredentialStep(provider)) {
+    return credentialStep(provider);
+  }
+
+  return getNextStepAfterApiKey(
+    provider,
+    modelIdOverride,
+    onboardingConfig,
+    mode,
+    forceModelStep,
+  );
+}
+
+/**
+ * The step to advance to after a credential is collected: the base-URL step if
+ * the provider requires one, otherwise the same downstream routing as
+ * `getNextStepAfterBaseUrl`.
+ */
+export function getNextStepAfterApiKey(
+  provider: OpenWikiProvider,
+  modelIdOverride: string | null,
+  onboardingConfig: OpenWikiOnboardingConfig,
+  mode: OpenWikiRunMode,
+  forceModelStep = false,
+): PromptStep | null {
+  if (needsBaseUrlStep(provider)) {
+    return "base-url";
+  }
+
+  return getNextStepAfterBaseUrl(
+    provider,
+    modelIdOverride,
+    onboardingConfig,
+    mode,
+    forceModelStep,
+  );
+}
+
+/**
+ * The step to advance to once provider, credential, and base URL are settled:
+ * the earliest remaining prerequisite (model, LangSmith, then mode-specific
+ * onboarding), or `null` when setup is complete. `forceModelStep` re-asks the
+ * model even when one is stored, used after a provider change.
+ */
+export function getNextStepAfterBaseUrl(
+  provider: OpenWikiProvider,
+  modelIdOverride: string | null,
+  onboardingConfig: OpenWikiOnboardingConfig,
+  mode: OpenWikiRunMode,
+  forceModelStep = false,
+): PromptStep | null {
+  if (
+    modelIdOverride === null &&
+    (forceModelStep || process.env[OPENWIKI_MODEL_ID_ENV_KEY] === undefined)
+  ) {
+    return "model";
+  }
+
+  if (process.env.LANGSMITH_API_KEY === undefined) {
+    return "langsmith";
+  }
+
+  if (mode === "code" && !isOnboardingComplete(onboardingConfig)) {
+    return "code-repo-confirm";
+  }
+
+  if (!getConfigModeId(onboardingConfig)) {
+    return "template";
+  }
+
+  if (!onboardingConfig.wikiGoal) {
+    return "wiki-goal";
+  }
+
+  if (!isCodeMode(onboardingConfig) && !onboardingConfig.ingestionSchedule) {
+    return "global-cron-mode";
+  }
+
+  if (!isOnboardingComplete(onboardingConfig)) {
+    return "source-menu";
+  }
+
+  return null;
 }

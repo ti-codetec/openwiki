@@ -38,14 +38,23 @@ import {
 import type { AuthProviderId } from "./auth/types.js";
 import type { OpenWikiRunMode } from "./cli/parse.js";
 import {
+  credentialStep,
+  getConfigModeId,
+  getConfigModeName,
   getCredentialSetupDetail,
   getDefaultCodeRepoRootPath,
   getDefaultLocalGitRepoPath,
+  getInitialStep,
+  getNextStepAfterApiKey,
+  getNextStepAfterBaseUrl,
+  getNextStepAfterProvider,
   hasValidConfiguredProvider,
   isBaseUrlConfigured,
+  isCodeMode,
   isCredentialConfigured,
   needsBaseUrlStep,
   needsCredentialStep,
+  type PromptStep,
 } from "./config/credentials.js";
 import type { ConnectorId } from "./connectors/types.js";
 import { getConnectorConfigPath } from "./openwiki-home.js";
@@ -89,30 +98,6 @@ type InitSetupProps = {
   onComplete: (result: InitSetupResult) => void;
   onError: (message: string) => void;
 };
-
-type PromptStep =
-  | "api-key"
-  | "base-url"
-  | "code-repo-confirm"
-  | "code-repo-path"
-  | "final"
-  | "langsmith"
-  | "model"
-  | "oauth-login"
-  | "provider"
-  | "run-mode"
-  | "source-auth"
-  | "global-cron-custom"
-  | "global-cron-mode"
-  | "global-power-mode"
-  | "source-description"
-  | "source-description-custom"
-  | "source-menu"
-  | "source-path"
-  | "source-confirm-continue"
-  | "source-secret"
-  | "template"
-  | "wiki-goal";
 
 type SourceSetupOption = {
   authProvider?: AuthProviderId;
@@ -353,11 +338,6 @@ const SOURCE_CONTINUE_OPTIONS = [
 ] as const;
 const FINAL_OPTIONS = ["Run ingestion now", "Run later"] as const;
 const CODE_REPO_OPTIONS = ["Confirm and continue", "Edit path"] as const;
-
-/** The step that collects the provider's primary credential. */
-function credentialStep(provider: OpenWikiProvider): PromptStep {
-  return providerUsesOAuth(provider) ? "oauth-login" : "api-key";
-}
 
 /**
  * Copies text to the terminal's clipboard using the OSC 52 escape sequence.
@@ -3027,144 +3007,6 @@ function SegmentedCronInput({
   );
 }
 
-export function getInitialStep(
-  modelIdOverride: string | null,
-  provider: OpenWikiProvider,
-  onboardingConfig: OpenWikiOnboardingConfig = createEmptyOnboardingConfig(),
-  mode: OpenWikiRunMode = "code",
-  allowModeSelection = false,
-): PromptStep | null {
-  if (allowModeSelection) {
-    return "run-mode";
-  }
-
-  if (!hasValidConfiguredProvider()) {
-    return "provider";
-  }
-
-  if (needsCredentialStep(provider)) {
-    return credentialStep(provider);
-  }
-
-  if (needsBaseUrlStep(provider)) {
-    return "base-url";
-  }
-
-  if (
-    modelIdOverride === null &&
-    process.env[OPENWIKI_MODEL_ID_ENV_KEY] === undefined
-  ) {
-    return "model";
-  }
-
-  if (process.env.LANGSMITH_API_KEY === undefined) {
-    return "langsmith";
-  }
-
-  if (mode === "code" && !isOnboardingComplete(onboardingConfig)) {
-    return "code-repo-confirm";
-  }
-
-  if (!getConfigModeId(onboardingConfig)) {
-    return "template";
-  }
-
-  if (!onboardingConfig.wikiGoal) {
-    return "wiki-goal";
-  }
-
-  if (!isCodeMode(onboardingConfig) && !onboardingConfig.ingestionSchedule) {
-    return "global-cron-mode";
-  }
-
-  if (!isOnboardingComplete(onboardingConfig)) {
-    return "source-menu";
-  }
-
-  return null;
-}
-
-export function getNextStepAfterProvider(
-  provider: OpenWikiProvider,
-  modelIdOverride: string | null,
-  onboardingConfig: OpenWikiOnboardingConfig = createEmptyOnboardingConfig(),
-  mode: OpenWikiRunMode = "code",
-  forceModelStep = false,
-): PromptStep | null {
-  if (needsCredentialStep(provider)) {
-    return credentialStep(provider);
-  }
-
-  return getNextStepAfterApiKey(
-    provider,
-    modelIdOverride,
-    onboardingConfig,
-    mode,
-    forceModelStep,
-  );
-}
-
-function getNextStepAfterApiKey(
-  provider: OpenWikiProvider,
-  modelIdOverride: string | null,
-  onboardingConfig: OpenWikiOnboardingConfig,
-  mode: OpenWikiRunMode,
-  forceModelStep = false,
-): PromptStep | null {
-  if (needsBaseUrlStep(provider)) {
-    return "base-url";
-  }
-
-  return getNextStepAfterBaseUrl(
-    provider,
-    modelIdOverride,
-    onboardingConfig,
-    mode,
-    forceModelStep,
-  );
-}
-
-function getNextStepAfterBaseUrl(
-  provider: OpenWikiProvider,
-  modelIdOverride: string | null,
-  onboardingConfig: OpenWikiOnboardingConfig,
-  mode: OpenWikiRunMode,
-  forceModelStep = false,
-): PromptStep | null {
-  if (
-    modelIdOverride === null &&
-    (forceModelStep || process.env[OPENWIKI_MODEL_ID_ENV_KEY] === undefined)
-  ) {
-    return "model";
-  }
-
-  if (process.env.LANGSMITH_API_KEY === undefined) {
-    return "langsmith";
-  }
-
-  if (mode === "code" && !isOnboardingComplete(onboardingConfig)) {
-    return "code-repo-confirm";
-  }
-
-  if (!getConfigModeId(onboardingConfig)) {
-    return "template";
-  }
-
-  if (!onboardingConfig.wikiGoal) {
-    return "wiki-goal";
-  }
-
-  if (!isCodeMode(onboardingConfig) && !onboardingConfig.ingestionSchedule) {
-    return "global-cron-mode";
-  }
-
-  if (!isOnboardingComplete(onboardingConfig)) {
-    return "source-menu";
-  }
-
-  return null;
-}
-
 function ensureRunModeConfig(
   config: OpenWikiOnboardingConfig,
   mode: OpenWikiRunMode,
@@ -3216,20 +3058,6 @@ function getSourceOption(sourceId: ConnectorId): SourceSetupOption {
   return (
     SOURCE_OPTIONS.find((source) => source.id === sourceId) ?? SOURCE_OPTIONS[0]
   );
-}
-
-function getConfigModeId(config: OpenWikiOnboardingConfig): string | undefined {
-  return config.modeId ?? config.templateId;
-}
-
-function getConfigModeName(
-  config: OpenWikiOnboardingConfig,
-): string | undefined {
-  return config.modeName ?? config.templateName;
-}
-
-function isCodeMode(config: OpenWikiOnboardingConfig): boolean {
-  return getConfigModeId(config) === "code";
 }
 
 function needsEnvValue(secretInput: SourceSecretInput): boolean {

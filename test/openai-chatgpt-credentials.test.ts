@@ -1,10 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
+  findNearestGitRepoRoot,
   getInitialStep,
   getNextStepAfterProvider,
-} from "../src/credentials.tsx";
-import {
-  findNearestGitRepoRoot,
   needsCredentialSetup,
 } from "../src/config/credentials.ts";
 
