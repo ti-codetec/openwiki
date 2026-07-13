@@ -42,12 +42,9 @@ import {
   codexTokensToEnv,
   loginWithChatGPT,
 } from "./agent/openai-chatgpt-oauth.js";
-import type { AuthProviderId } from "./auth/types.js";
 import type { OpenWikiRunMode } from "./cli/parse.js";
 import {
   credentialStep,
-  getConfigModeId,
-  getConfigModeName,
   getCredentialSetupDetail,
   getDefaultCodeRepoRootPath,
   getDefaultLocalGitRepoPath,
@@ -57,13 +54,16 @@ import {
   getNextStepAfterProvider,
   hasValidConfiguredProvider,
   isBaseUrlConfigured,
-  isCodeMode,
   isCredentialConfigured,
   needsBaseUrlStep,
   needsCredentialStep,
   type PromptStep,
 } from "./config/credentials.js";
-import type { ConnectorId } from "./connectors/types.js";
+import type {
+  ConnectorId,
+  SourceSecretInput,
+  SourceSetupOption,
+} from "./connectors/types.js";
 import { getConnectorConfigPath } from "./openwiki-home.js";
 import { openWikiEnvPath, saveOpenWikiEnv } from "./env.js";
 import {
@@ -71,11 +71,28 @@ import {
   isOnboardingComplete,
   openWikiOnboardingPath,
   readOpenWikiOnboardingConfig,
-  readRepositoryWikiInstructions,
   saveRepositoryWikiInstructions,
   saveOpenWikiOnboardingConfig,
   type OpenWikiOnboardingConfig,
 } from "./onboarding.js";
+import {
+  addSourceInstanceConfig,
+  createSourceInstanceId,
+  createSourceInstanceName,
+  ensureRunModeConfig,
+  getConfigModeId,
+  getConfigModeName,
+  getConnectedSourceCount,
+  getRunModeName,
+  getRunModeSelectionIndex,
+  getSourceInstanceCount,
+  getSourceInstances,
+  getTemplateGoal,
+  hydrateRunModeConfig,
+  isCodeMode,
+  ONBOARDING_TEMPLATES,
+  RUN_MODE_OPTIONS,
+} from "./onboarding-setup.js";
 import {
   getSuggestedCronExpression,
   installOpenWikiPowerSchedule,
@@ -106,22 +123,6 @@ type InitSetupProps = {
   onError: (message: string) => void;
 };
 
-type SourceSetupOption = {
-  authProvider?: AuthProviderId;
-  displayName: string;
-  examples: string[];
-  id: ConnectorId;
-  instructions: string[];
-  secretInputs: SourceSecretInput[];
-};
-
-type SourceSecretInput = {
-  envKey: string;
-  label: string;
-  optional?: boolean;
-  secret?: boolean;
-};
-
 type SourceSetupState = {
   authUrl?: string;
   connectorConfig?: Record<string, unknown>;
@@ -142,70 +143,6 @@ type PromptInputKey = {
   tab?: boolean;
   upArrow?: boolean;
 };
-
-type OnboardingMode = {
-  description: string;
-  id: string;
-  name: string;
-  sourceIds: ConnectorId[];
-  suggestedSources: string[];
-  suggestedGoal: string;
-};
-
-const ONBOARDING_TEMPLATES = [
-  {
-    description:
-      "Maintain a structured project wiki from a local Git repository, with code-oriented pages for architecture, workflows, source maps, and operational guidance.",
-    id: "code",
-    name: "Code",
-    sourceIds: ["git-repo"],
-    suggestedSources: ["Local Git repository"],
-    suggestedGoal:
-      "A code wiki for this local repository. Prioritize a concise quickstart, architecture overview, source map, key workflows, domain concepts, operations/runbook notes, testing guidance, and integration points. Inspect git history to understand reasoning behind code changes and the progression of the repository. Keep pages grounded in the repository structure and recent code changes. Prefer practical navigation for engineers over generic summaries.",
-  },
-  {
-    description:
-      "A personal assistant wiki that builds memory from email, notes, social/research sources, and web search so you can ask about projects, priorities, people, and recurring context.",
-    id: "personal",
-    name: "Personal",
-    sourceIds: [
-      "git-repo",
-      "google",
-      "notion",
-      "web-search",
-      "hackernews",
-      "x",
-    ],
-    suggestedSources: [
-      "Gmail",
-      "Notion",
-      "Web Search (Tavily)",
-      "Hacker News",
-      "X/Twitter",
-    ],
-    suggestedGoal:
-      "Your personal brain. Track active projects, people, organizations, decisions, commitments, follow-ups, useful links, recurring themes, and fresh external signals. Organize the wiki so a personal assistant can answer what changed, what matters, what needs attention, and where supporting evidence came from. Be selective: summarize durable context and explicit action items, not every raw item.",
-  },
-] as const satisfies readonly OnboardingMode[];
-
-const RUN_MODE_OPTIONS = [
-  {
-    description:
-      "Build a local personal brain wiki in ~/.openwiki/wiki from configured sources.",
-    id: "personal",
-    name: "Personal",
-  },
-  {
-    description:
-      "Build repository documentation in ./openwiki for this codebase.",
-    id: "code",
-    name: "Code",
-  },
-] as const satisfies readonly {
-  description: string;
-  id: OpenWikiRunMode;
-  name: string;
-}[];
 
 const SOURCE_OPTIONS = [
   {
@@ -3004,53 +2941,6 @@ function SegmentedCronInput({
   );
 }
 
-function ensureRunModeConfig(
-  config: OpenWikiOnboardingConfig,
-  mode: OpenWikiRunMode,
-): OpenWikiOnboardingConfig {
-  if (getConfigModeId(config) === mode) {
-    return config;
-  }
-
-  const runModeTemplate = ONBOARDING_TEMPLATES.find(
-    (option) => option.id === mode,
-  );
-  if (!runModeTemplate) {
-    return config;
-  }
-
-  return {
-    ...config,
-    modeId: runModeTemplate.id,
-    modeName: runModeTemplate.name,
-    templateId: runModeTemplate.id,
-    templateName: runModeTemplate.name,
-  };
-}
-
-async function hydrateRunModeConfig(
-  config: OpenWikiOnboardingConfig,
-  mode: OpenWikiRunMode,
-  repoRoot: string,
-): Promise<OpenWikiOnboardingConfig> {
-  if (mode !== "code") {
-    return config;
-  }
-
-  const wikiGoal = await readRepositoryWikiInstructions(repoRoot);
-
-  return wikiGoal ? { ...config, wikiGoal } : config;
-}
-
-function getRunModeSelectionIndex(mode: OpenWikiRunMode): number {
-  const index = RUN_MODE_OPTIONS.findIndex((option) => option.id === mode);
-  return index === -1 ? 0 : index;
-}
-
-function getRunModeName(mode: OpenWikiRunMode): string {
-  return RUN_MODE_OPTIONS.find((option) => option.id === mode)?.name ?? mode;
-}
-
 function getSourceOption(sourceId: ConnectorId): SourceSetupOption {
   return (
     SOURCE_OPTIONS.find((source) => source.id === sourceId) ?? SOURCE_OPTIONS[0]
@@ -3059,81 +2949,6 @@ function getSourceOption(sourceId: ConnectorId): SourceSetupOption {
 
 function needsEnvValue(secretInput: SourceSecretInput): boolean {
   return !process.env[secretInput.envKey];
-}
-
-function addSourceInstanceConfig(
-  config: OpenWikiOnboardingConfig,
-  sourceInstance: OpenWikiOnboardingConfig["sourceInstances"][number],
-): OpenWikiOnboardingConfig {
-  const sourceInstances = [...config.sourceInstances, sourceInstance];
-  return {
-    ...config,
-    sourceInstances,
-    sources: deriveLegacySources(sourceInstances),
-  };
-}
-
-function deriveLegacySources(
-  sourceInstances: OpenWikiOnboardingConfig["sourceInstances"],
-): OpenWikiOnboardingConfig["sources"] {
-  const sources: OpenWikiOnboardingConfig["sources"] = {};
-
-  for (const sourceInstance of sourceInstances) {
-    if (!sources[sourceInstance.connectorId]) {
-      sources[sourceInstance.connectorId] = {
-        connectedAt: sourceInstance.connectedAt,
-        connectorConfig: sourceInstance.connectorConfig,
-        ingestionGoal: sourceInstance.ingestionGoal,
-      };
-    }
-  }
-
-  return sources;
-}
-
-function getSourceInstanceCount(
-  config: OpenWikiOnboardingConfig,
-  sourceId: ConnectorId,
-): number {
-  return getSourceInstances(config, sourceId).length;
-}
-
-function getSourceInstances(
-  config: OpenWikiOnboardingConfig,
-  sourceId: ConnectorId,
-): OpenWikiOnboardingConfig["sourceInstances"] {
-  return config.sourceInstances.filter(
-    (sourceInstance) => sourceInstance.connectorId === sourceId,
-  );
-}
-
-function getConnectedSourceCount(
-  config: OpenWikiOnboardingConfig,
-  sourceOptions: readonly SourceSetupOption[],
-): number {
-  const sourceIds = new Set(sourceOptions.map((source) => source.id));
-  return config.sourceInstances.filter((sourceInstance) =>
-    sourceIds.has(sourceInstance.connectorId),
-  ).length;
-}
-
-function createSourceInstanceId(
-  sourceId: ConnectorId,
-  config: OpenWikiOnboardingConfig,
-): string {
-  const sourceCount = getSourceInstanceCount(config, sourceId) + 1;
-  return `${sourceId}-${sourceCount}`;
-}
-
-function createSourceInstanceName(
-  source: SourceSetupOption,
-  description: string,
-  config: OpenWikiOnboardingConfig,
-): string {
-  const sourceCount = getSourceInstanceCount(config, source.id) + 1;
-  const trimmedDescription = description.trim();
-  const suffix = trimmedDescription.length > 0 ? `: ${trimmedDescription}` : "";
-  return `${source.displayName} ${sourceCount}${suffix}`.slice(0, 120);
 }
 
 function isSourceStep(step: PromptStep | null): boolean {
@@ -3164,13 +2979,6 @@ function getInputDisplayWidth(stdoutColumns: number | undefined): number {
   }
 
   return Math.max(24, Math.min(96, stdoutColumns - 16));
-}
-
-function getTemplateGoal(templateId: string | undefined): string {
-  return (
-    ONBOARDING_TEMPLATES.find((template) => template.id === templateId)
-      ?.suggestedGoal ?? ""
-  );
 }
 
 function getSourceMenuLabel(

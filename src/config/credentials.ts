@@ -21,6 +21,7 @@ import {
   isRepositoryCodeOnboardingCompleteSync,
   type OpenWikiOnboardingConfig,
 } from "../onboarding.js";
+import { getConfigModeId, isCodeMode } from "../onboarding-setup.js";
 import {
   getProviderApiKeyEnvKey,
   getProviderBaseUrlEnvKey,
@@ -213,34 +214,6 @@ export type PromptStep =
  */
 export function credentialStep(provider: OpenWikiProvider): PromptStep {
   return providerUsesOAuth(provider) ? "oauth-login" : "api-key";
-}
-
-/**
- * The onboarding mode's stable id, preferring the current `modeId` and falling
- * back to the legacy `templateId`; `undefined` when neither has been chosen.
- */
-export function getConfigModeId(
-  config: OpenWikiOnboardingConfig,
-): string | undefined {
-  return config.modeId ?? config.templateId;
-}
-
-/**
- * The onboarding mode's display name, preferring the current `modeName` and
- * falling back to the legacy `templateName`; `undefined` when neither is set.
- */
-export function getConfigModeName(
-  config: OpenWikiOnboardingConfig,
-): string | undefined {
-  return config.modeName ?? config.templateName;
-}
-
-/**
- * True when the onboarding config selects `code` mode (documenting a repo)
- * rather than `personal` mode.
- */
-export function isCodeMode(config: OpenWikiOnboardingConfig): boolean {
-  return getConfigModeId(config) === "code";
 }
 
 /**

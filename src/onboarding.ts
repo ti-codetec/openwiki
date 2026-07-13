@@ -400,7 +400,12 @@ function normalizeSourceScheduleConfig(
   };
 }
 
-function deriveLegacySources(
+/**
+ * Rebuilds the legacy `sources` map from the source-instance list, keeping the
+ * first instance seen for each connector. Retained for config shapes that still
+ * read the flat `sources` map.
+ */
+export function deriveLegacySources(
   sourceInstances: OnboardingSourceInstanceConfig[],
 ): OpenWikiOnboardingConfig["sources"] {
   const sources: OpenWikiOnboardingConfig["sources"] = {};
