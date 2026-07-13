@@ -11,7 +11,7 @@ import {
 import {
   readOpenWikiOnboardingConfig,
   readRepositoryWikiInstructions,
-} from "../onboarding.js";
+} from "../onboarding/store.js";
 import type {
   OpenWikiCommand,
   OpenWikiOutputMode,

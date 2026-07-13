@@ -20,8 +20,8 @@ import {
   isOpenWikiOnboardingCompleteSync,
   isRepositoryCodeOnboardingCompleteSync,
   type OpenWikiOnboardingConfig,
-} from "../onboarding.js";
-import { getConfigModeId, isCodeMode } from "../onboarding-setup.js";
+} from "../onboarding/store.js";
+import { getConfigModeId, isCodeMode } from "../onboarding/setup.js";
 import {
   getProviderApiKeyEnvKey,
   getProviderBaseUrlEnvKey,

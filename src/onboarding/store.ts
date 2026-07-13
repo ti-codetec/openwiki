@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { OPEN_WIKI_DIR } from "./constants.js";
-import { ensureOpenWikiHome, openWikiHomeDir } from "./openwiki-home.js";
-import type { ConnectorId } from "./connectors/types.js";
+import { OPEN_WIKI_DIR } from "../constants.js";
+import { ensureOpenWikiHome, openWikiHomeDir } from "../openwiki-home.js";
+import type { ConnectorId } from "../connectors/types.js";
 
 export const openWikiOnboardingPath = path.join(
   openWikiHomeDir,

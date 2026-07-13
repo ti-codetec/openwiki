@@ -3,7 +3,7 @@ import { getErrorMessage } from "../../diagnostics.js";
 import {
   readOpenWikiOnboardingConfig,
   saveOpenWikiOnboardingConfig,
-} from "../../onboarding.js";
+} from "../../onboarding/store.js";
 import {
   deleteConnectorSchedules,
   getSavedPowerScheduleStatus,

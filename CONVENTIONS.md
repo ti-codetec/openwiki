@@ -15,15 +15,16 @@ our code is the shell around it. `openwiki/quickstart.md` has the bigger picture
 
 Each concern owns a directory:
 
-| Directory          | Owns                                                                                |
-| ------------------ | ----------------------------------------------------------------------------------- |
-| `src/cli/`         | Arg parsing, dispatch, the subcommand and `--print` handlers. Keep it thin.         |
-| `src/ui/`          | Ink (terminal React) components. No domain logic.                                   |
-| `src/providers/`   | Provider registry, provider/model resolution, `createModel`, model-provider OAuth.  |
-| `src/config/`      | `~/.openwiki/.env` persistence, credential logic, the secret registry, redaction.   |
-| `src/agent/`       | Run orchestration, the prompt, the write-scoping backend, stream parsing, metadata. |
-| `src/connectors/`  | The data-source connectors and their OAuth.                                         |
-| `src/constants.ts` | Literals only. No logic.                                                            |
+| Directory          | Owns                                                                                           |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| `src/cli/`         | Arg parsing, dispatch, the subcommand and `--print` handlers. Keep it thin.                    |
+| `src/ui/`          | Ink (terminal React) components. No domain logic.                                              |
+| `src/providers/`   | Provider registry, provider/model resolution, `createModel`, model-provider OAuth.             |
+| `src/config/`      | `~/.openwiki/.env` persistence, credential logic, the secret registry, redaction.              |
+| `src/agent/`       | Run orchestration, the prompt, the write-scoping backend, stream parsing, metadata.            |
+| `src/connectors/`  | The data-source connectors and their OAuth.                                                    |
+| `src/onboarding/`  | Onboarding config persistence (`store.ts`) and the setup wizard's tables/helpers (`setup.ts`). |
+| `src/constants.ts` | Literals only. No logic.                                                                       |
 
 `[ow:one-concern-per-dir]` New code goes where its concern already lives. If
 nothing fits, that's a conversation, not a reason to drop it in the nearest file.

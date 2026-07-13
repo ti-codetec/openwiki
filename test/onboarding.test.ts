@@ -15,7 +15,7 @@ async function createTempHome(): Promise<string> {
 async function loadOnboardingModule(home: string) {
   vi.resetModules();
   process.env.HOME = home;
-  return await import("../src/onboarding.ts");
+  return await import("../src/onboarding/store.ts");
 }
 
 afterEach(async () => {

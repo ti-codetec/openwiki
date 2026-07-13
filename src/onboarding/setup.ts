@@ -1,10 +1,10 @@
-import type { OpenWikiRunMode } from "./cli/parse.js";
-import type { ConnectorId, SourceSetupOption } from "./connectors/types.js";
+import type { OpenWikiRunMode } from "../cli/parse.js";
+import type { ConnectorId, SourceSetupOption } from "../connectors/types.js";
 import {
   deriveLegacySources,
   type OpenWikiOnboardingConfig,
   readRepositoryWikiInstructions,
-} from "./onboarding.js";
+} from "./store.js";
 
 /**
  * A selectable onboarding mode (a.k.a. template): the wiki profile the user

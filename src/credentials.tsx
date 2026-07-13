@@ -74,7 +74,7 @@ import {
   saveRepositoryWikiInstructions,
   saveOpenWikiOnboardingConfig,
   type OpenWikiOnboardingConfig,
-} from "./onboarding.js";
+} from "./onboarding/store.js";
 import {
   addSourceInstanceConfig,
   createSourceInstanceId,
@@ -92,7 +92,7 @@ import {
   isCodeMode,
   ONBOARDING_TEMPLATES,
   RUN_MODE_OPTIONS,
-} from "./onboarding-setup.js";
+} from "./onboarding/setup.js";
 import {
   getSuggestedCronExpression,
   installOpenWikiPowerSchedule,

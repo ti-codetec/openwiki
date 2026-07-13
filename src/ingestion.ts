@@ -12,7 +12,7 @@ import {
   readOpenWikiOnboardingConfig,
   type OnboardingSourceInstanceConfig,
   type OpenWikiOnboardingConfig,
-} from "./onboarding.js";
+} from "./onboarding/store.js";
 import {
   ensureOpenWikiHome,
   getConnectorConfigPath,

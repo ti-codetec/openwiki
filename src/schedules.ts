@@ -7,7 +7,7 @@ import { CronExpressionParser } from "cron-parser";
 import cronstrue from "cronstrue";
 import { ensureOpenWikiHome, openWikiHomeDir } from "./openwiki-home.js";
 import type { ConnectorId } from "./connectors/types.js";
-import type { OpenWikiOnboardingConfig } from "./onboarding.js";
+import type { OpenWikiOnboardingConfig } from "./onboarding/store.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_FIRST_HOUR = 2;
