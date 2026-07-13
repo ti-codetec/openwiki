@@ -1,5 +1,5 @@
 import { shouldCheckUpdateNoop, getUpdateNoopStatus } from "./agent/utils.js";
-import type { CliCommand } from "./commands.js";
+import type { CliCommand } from "./cli/parse.js";
 import {
   getProviderApiKeyEnvKey,
   resolveConfiguredProvider,

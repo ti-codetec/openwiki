@@ -65,9 +65,9 @@ is meant to mutate them.
 ## Docstrings
 
 `[ow:docstring-exports]` Every export gets a docstring, and `[ow:docstring-fields]`
-so does every field whose meaning isn't obvious from its name, optional ones
-especially (say what happens when it's absent). Explain what the thing is for,
-not what its name already says.
+so does every field of an interface, including obvious-looking ones; for
+optional fields, say what happens when they're absent. Explain what the thing is
+for, not what its name already says.
 
 `[ow:docstring-style]` Always the block form, never a collapsed one-liner, with a
 blank line between documented fields:

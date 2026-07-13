@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { resolveStartupCommand } from "../src/startup.ts";
-import type { CliCommand } from "../src/commands.ts";
+import type { CliCommand } from "../src/cli/parse.ts";
 
 const execFileAsync = promisify(execFile);
 const originalProvider = process.env.OPENWIKI_PROVIDER;

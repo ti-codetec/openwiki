@@ -1,5 +1,5 @@
 import type { OpenWikiOutputMode } from "../agent/types.js";
-import type { CliCommand, OpenWikiRunMode } from "../commands.js";
+import type { CliCommand, OpenWikiRunMode } from "./parse.js";
 import { openWikiLocalWikiDir } from "../openwiki-home.js";
 
 /**

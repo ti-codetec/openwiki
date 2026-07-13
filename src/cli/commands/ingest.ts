@@ -1,4 +1,4 @@
-import type { CliCommand } from "../../commands.js";
+import type { CliCommand } from "../parse.js";
 import { getErrorMessage } from "../../diagnostics.js";
 import { runOpenWikiIngestion } from "../../ingestion.js";
 import { isDebugMode } from "../../ui/format.js";

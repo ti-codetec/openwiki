@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
-import type { HelpRow } from "../commands.js";
+import type { HelpRow } from "../cli/help.js";
 
 interface PanelProps {
   title: string;

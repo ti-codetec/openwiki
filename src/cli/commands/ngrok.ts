@@ -1,5 +1,5 @@
 import { startNgrokTunnel } from "../../auth/ngrok.js";
-import type { CliCommand } from "../../commands.js";
+import type { CliCommand } from "../parse.js";
 import { getErrorMessage } from "../../diagnostics.js";
 
 /**

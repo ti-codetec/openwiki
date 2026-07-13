@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import type { ErrorDiagnostic } from "../cli/error-diagnostics.js";
-import { helpContent, isDevelopmentMode } from "../commands.js";
+import { helpContent } from "../cli/help.js";
+import { isDevelopmentMode } from "../cli/parse.js";
 import {
   getDefaultModelId,
   resolveConfiguredProvider,

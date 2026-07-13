@@ -43,7 +43,7 @@ import {
   readCodexTokensFromEnv,
 } from "./agent/openai-chatgpt-oauth.js";
 import type { AuthProviderId } from "./auth/types.js";
-import type { OpenWikiRunMode } from "./commands.js";
+import type { OpenWikiRunMode } from "./cli/parse.js";
 import type { ConnectorId } from "./connectors/types.js";
 import { getConnectorConfigPath } from "./openwiki-home.js";
 import { openWikiEnvPath, saveOpenWikiEnv } from "./env.js";

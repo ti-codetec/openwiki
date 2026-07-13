@@ -9,7 +9,7 @@ import {
   parseCommand,
   shouldRunNonInteractively,
   type CliCommand,
-} from "./commands.js";
+} from "./cli/parse.js";
 import { loadOpenWikiEnv } from "./env.js";
 import { resolveStartupCommand } from "./startup.js";
 import { App } from "./ui/app.js";

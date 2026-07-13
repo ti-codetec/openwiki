@@ -4,7 +4,7 @@ import {
   shouldDiscoverToolsAfterAuth,
 } from "../../auth/configure.js";
 import { formatAuthProviderList, runOAuthAuth } from "../../auth/oauth.js";
-import type { CliCommand } from "../../commands.js";
+import type { CliCommand } from "../parse.js";
 import { getErrorMessage } from "../../diagnostics.js";
 
 /**

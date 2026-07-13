@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { parseCommand, shouldRunNonInteractively } from "../src/commands.ts";
+import { parseCommand, shouldRunNonInteractively } from "../src/cli/parse.ts";
 
 // parseCommand's --dry-run gate consults isDevelopmentMode(), which reads
 // NODE_ENV / OPENWIKI_DEV. Pin both to a non-development state per test and

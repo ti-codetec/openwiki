@@ -9,7 +9,7 @@ import {
   getRunModeOutputMode,
   shouldAutoExitStartupRun,
 } from "../cli/run-mode.js";
-import { type CliCommand, type OpenWikiRunMode } from "../commands.js";
+import { type CliCommand, type OpenWikiRunMode } from "../cli/parse.js";
 import {
   OPENWIKI_MODEL_ID_ENV_KEY,
   OPENWIKI_PROVIDER_ENV_KEY,
