@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { homedir } from "node:os";
 import path from "node:path";
 import { Box, Text, useInput, useStdout } from "ink";
 import { configureAuthProvider } from "./auth/configure.js";
@@ -51,9 +50,14 @@ import {
   hasValidConfiguredProvider,
   isBaseUrlConfigured,
   isCredentialConfigured,
+  isScheduleStep,
+  isSourceStep,
   needsBaseUrlStep,
   needsCredentialStep,
+  normalizeLocalPath,
   type PromptStep,
+  sanitizeRepoId,
+  validateLocalDirectoryPath,
 } from "./config/credentials.js";
 import {
   CRON_FIELD_LABELS,
@@ -87,9 +91,11 @@ import {
   createSourceInstanceId,
   createSourceInstanceName,
   ensureRunModeConfig,
+  FINAL_OPTIONS,
   getConfigModeId,
   getConfigModeName,
   getConnectedSourceCount,
+  getFinalOptionLabel,
   getRunModeName,
   getRunModeSelectionIndex,
   getSourceInstanceCount,
@@ -163,7 +169,6 @@ const SOURCE_CONTINUE_OPTIONS = [
   "Go back to connections",
   "Continue without all sources",
 ] as const;
-const FINAL_OPTIONS = ["Run ingestion now", "Run later"] as const;
 const CODE_REPO_OPTIONS = ["Confirm and continue", "Edit path"] as const;
 
 /**
@@ -2834,14 +2839,6 @@ function SegmentedCronInput({
   );
 }
 
-function isSourceStep(step: PromptStep | null): boolean {
-  return Boolean(step?.startsWith("source-"));
-}
-
-function isScheduleStep(step: PromptStep | null): boolean {
-  return Boolean(step?.startsWith("global-"));
-}
-
 function moveSelectionIndex(
   currentIndex: number,
   offset: number,
@@ -2862,17 +2859,6 @@ function getInputDisplayWidth(stdoutColumns: number | undefined): number {
   }
 
   return Math.max(24, Math.min(96, stdoutColumns - 16));
-}
-
-function getFinalOptionLabel(
-  option: (typeof FINAL_OPTIONS)[number],
-  mode: OpenWikiRunMode,
-): string {
-  if (mode !== "code") {
-    return option;
-  }
-
-  return option === "Run ingestion now" ? "Run OpenWiki now" : "Open chat";
 }
 
 function handleCronEditorInput({
@@ -2963,44 +2949,6 @@ function handleCronEditorInput({
 
 function sanitizeInputChunk(value: string): string {
   return value.replace(/[\r\n]/gu, "");
-}
-
-function sanitizeRepoId(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]/gu, "-").slice(0, 80) || "repo";
-}
-
-async function validateLocalDirectoryPath(value: string): Promise<string> {
-  const normalizedPath = normalizeLocalPath(value);
-
-  if (normalizedPath.length === 0) {
-    throw new Error("Enter a local directory.");
-  }
-
-  const { stat } = await import("node:fs/promises");
-  const pathStat = await stat(normalizedPath);
-
-  if (!pathStat.isDirectory()) {
-    throw new Error(`${normalizedPath} is not a directory.`);
-  }
-
-  return normalizedPath;
-}
-
-function normalizeLocalPath(value: string): string {
-  const trimmedValue = value.trim();
-  if (trimmedValue.length === 0) {
-    return "";
-  }
-
-  if (trimmedValue === "~") {
-    return homedir();
-  }
-
-  if (trimmedValue.startsWith("~/") || trimmedValue.startsWith("~\\")) {
-    return path.resolve(homedir(), trimmedValue.slice(2));
-  }
-
-  return path.resolve(trimmedValue);
 }
 
 function getErrorMessage(error: unknown): string {

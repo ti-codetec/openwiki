@@ -285,3 +285,23 @@ export function createSourceInstanceName(
   const suffix = trimmedDescription.length > 0 ? `: ${trimmedDescription}` : "";
   return `${source.displayName} ${sourceCount}${suffix}`.slice(0, 120);
 }
+
+/**
+ * The final-step menu options: run ingestion now, or defer to later.
+ */
+export const FINAL_OPTIONS = ["Run ingestion now", "Run later"] as const;
+
+/**
+ * The final-step option label, reworded for code mode ("Run OpenWiki now" /
+ * "Open chat") where the ingestion phrasing does not fit.
+ */
+export function getFinalOptionLabel(
+  option: (typeof FINAL_OPTIONS)[number],
+  mode: OpenWikiRunMode,
+): string {
+  if (mode !== "code") {
+    return option;
+  }
+
+  return option === "Run ingestion now" ? "Run OpenWiki now" : "Open chat";
+}

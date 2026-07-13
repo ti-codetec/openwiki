@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import {
   formatChatGptAccount,
@@ -373,4 +374,72 @@ export function getNextStepAfterBaseUrl(
   }
 
   return null;
+}
+
+/**
+ * True when a step collects a source (its id begins with `source-`).
+ */
+export function isSourceStep(step: PromptStep | null): boolean {
+  return Boolean(step?.startsWith("source-"));
+}
+
+/**
+ * True when a step configures the global schedule (its id begins with
+ * `global-`).
+ */
+export function isScheduleStep(step: PromptStep | null): boolean {
+  return Boolean(step?.startsWith("global-"));
+}
+
+/**
+ * Sanitizes a user-entered repository identifier into a filesystem-safe slug:
+ * non-alphanumeric runs become `-`, capped at 80 characters, defaulting to
+ * `repo` when nothing usable remains.
+ */
+export function sanitizeRepoId(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/gu, "-").slice(0, 80) || "repo";
+}
+
+/**
+ * Expands and resolves a user-entered path (including a leading `~`) to an
+ * absolute path; returns an empty string when the input is blank.
+ */
+export function normalizeLocalPath(value: string): string {
+  const trimmedValue = value.trim();
+  if (trimmedValue.length === 0) {
+    return "";
+  }
+
+  if (trimmedValue === "~") {
+    return homedir();
+  }
+
+  if (trimmedValue.startsWith("~/") || trimmedValue.startsWith("~\\")) {
+    return path.resolve(homedir(), trimmedValue.slice(2));
+  }
+
+  return path.resolve(trimmedValue);
+}
+
+/**
+ * Resolves a user-entered path and asserts it names an existing directory,
+ * throwing an actionable `Error` when it is blank or not a directory.
+ */
+export async function validateLocalDirectoryPath(
+  value: string,
+): Promise<string> {
+  const normalizedPath = normalizeLocalPath(value);
+
+  if (normalizedPath.length === 0) {
+    throw new Error("Enter a local directory.");
+  }
+
+  const { stat } = await import("node:fs/promises");
+  const pathStat = await stat(normalizedPath);
+
+  if (!pathStat.isDirectory()) {
+    throw new Error(`${normalizedPath} is not a directory.`);
+  }
+
+  return normalizedPath;
 }
