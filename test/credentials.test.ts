@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { needsCredentialSetup } from "../src/credentials.tsx";
+import { needsCredentialSetup } from "../src/config/credentials.ts";
 
 const ENV_KEYS = [
   "LANGSMITH_API_KEY",

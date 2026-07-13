@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
-  findNearestGitRepoRoot,
   getInitialStep,
   getNextStepAfterProvider,
-  needsCredentialSetup,
 } from "../src/credentials.tsx";
+import {
+  findNearestGitRepoRoot,
+  needsCredentialSetup,
+} from "../src/config/credentials.ts";
 
 const MANAGED_KEYS = [
   "OPENWIKI_PROVIDER",

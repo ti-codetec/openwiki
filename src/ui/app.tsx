@@ -21,7 +21,8 @@ import {
   resolveConfiguredProvider,
   type OpenWikiProvider,
 } from "../providers/config.js";
-import { InitSetup, needsCredentialSetup } from "../credentials.js";
+import { InitSetup } from "../credentials.js";
+import { needsCredentialSetup } from "../config/credentials.js";
 import { getErrorMessage } from "../diagnostics.js";
 import {
   getCredentialDiagnostics,

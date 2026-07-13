@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { homedir } from "node:os";
@@ -8,8 +7,6 @@ import { configureAuthProvider } from "./auth/configure.js";
 import { runOAuthAuth } from "./auth/oauth.js";
 import {
   DEFAULT_PROVIDER,
-  OPENAI_CHATGPT_EMAIL_ENV_KEY,
-  OPENAI_CHATGPT_PLAN_ENV_KEY,
   OPENWIKI_GOOGLE_CLIENT_ID_ENV_KEY,
   OPENWIKI_GOOGLE_CLIENT_SECRET_ENV_KEY,
   OPENWIKI_MODEL_ID_ENV_KEY,
@@ -26,7 +23,6 @@ import {
   isValidBaseUrl,
   isValidModelId,
   normalizeModelId,
-  normalizeProvider,
   type OpenWikiProvider,
   providerRequiresBaseUrl,
   providerUsesOAuth,
@@ -37,21 +33,26 @@ import {
   type ChatGptLoginHandle,
   type CodexTokens,
   codexTokensToEnv,
-  formatChatGptAccount,
-  isChatGptTokenExpired,
   loginWithChatGPT,
-  readCodexTokensFromEnv,
 } from "./agent/openai-chatgpt-oauth.js";
 import type { AuthProviderId } from "./auth/types.js";
 import type { OpenWikiRunMode } from "./cli/parse.js";
+import {
+  getCredentialSetupDetail,
+  getDefaultCodeRepoRootPath,
+  getDefaultLocalGitRepoPath,
+  hasValidConfiguredProvider,
+  isBaseUrlConfigured,
+  isCredentialConfigured,
+  needsBaseUrlStep,
+  needsCredentialStep,
+} from "./config/credentials.js";
 import type { ConnectorId } from "./connectors/types.js";
 import { getConnectorConfigPath } from "./openwiki-home.js";
 import { openWikiEnvPath, saveOpenWikiEnv } from "./env.js";
 import {
   createEmptyOnboardingConfig,
-  isOpenWikiOnboardingCompleteSync,
   isOnboardingComplete,
-  isRepositoryCodeOnboardingCompleteSync,
   openWikiOnboardingPath,
   readOpenWikiOnboardingConfig,
   readRepositoryWikiInstructions,
@@ -353,91 +354,9 @@ const SOURCE_CONTINUE_OPTIONS = [
 const FINAL_OPTIONS = ["Run ingestion now", "Run later"] as const;
 const CODE_REPO_OPTIONS = ["Confirm and continue", "Edit path"] as const;
 
-export function needsCredentialSetup(
-  modelIdOverride: string | null = null,
-  mode: OpenWikiRunMode = "personal",
-): boolean {
-  const provider = resolveConfiguredProvider();
-
-  const needsCredentials =
-    !hasValidConfiguredProvider() ||
-    needsCredentialStep(provider) ||
-    needsBaseUrlStep(provider) ||
-    (modelIdOverride === null &&
-      process.env[OPENWIKI_MODEL_ID_ENV_KEY] === undefined) ||
-    process.env.LANGSMITH_API_KEY === undefined;
-
-  if (needsCredentials) {
-    return true;
-  }
-
-  return mode === "code"
-    ? !isRepositoryCodeOnboardingCompleteSync(getDefaultCodeRepoRootPath())
-    : !isOpenWikiOnboardingCompleteSync();
-}
-
-/**
- * Whether the provider still needs its primary credential collected. For
- * `oauth` providers this is a valid, non-expired stored token; for everyone
- * else it is a pasted API key.
- */
-function needsCredentialStep(provider: OpenWikiProvider): boolean {
-  return providerUsesOAuth(provider)
-    ? !hasValidStoredToken()
-    : !process.env[getProviderApiKeyEnvKey(provider)];
-}
-
 /** The step that collects the provider's primary credential. */
 function credentialStep(provider: OpenWikiProvider): PromptStep {
   return providerUsesOAuth(provider) ? "oauth-login" : "api-key";
-}
-
-function hasValidStoredToken(env: NodeJS.ProcessEnv = process.env): boolean {
-  const tokens = readCodexTokensFromEnv(env);
-
-  return tokens !== null && !isChatGptTokenExpired(tokens.expiresAtMs);
-}
-
-function needsBaseUrlStep(provider: OpenWikiProvider): boolean {
-  if (!providerRequiresBaseUrl(provider)) {
-    return false;
-  }
-
-  return !isBaseUrlConfigured(provider);
-}
-
-function isBaseUrlConfigured(provider: OpenWikiProvider): boolean {
-  const baseUrlEnvKey = getProviderBaseUrlEnvKey(provider);
-
-  return baseUrlEnvKey ? Boolean(process.env[baseUrlEnvKey]) : false;
-}
-
-function isCredentialConfigured(provider: OpenWikiProvider): boolean {
-  return providerUsesOAuth(provider)
-    ? hasValidStoredToken()
-    : Boolean(process.env[getProviderApiKeyEnvKey(provider)]);
-}
-
-function getCredentialSetupDetail(
-  provider: OpenWikiProvider,
-  tokens: CodexTokens | null = null,
-): string {
-  if (providerUsesOAuth(provider)) {
-    if (!isCredentialConfigured(provider) && !tokens) {
-      return "sign in with your ChatGPT account";
-    }
-
-    const account = formatChatGptAccount(
-      tokens?.email ?? process.env[OPENAI_CHATGPT_EMAIL_ENV_KEY] ?? null,
-      tokens?.planType ?? process.env[OPENAI_CHATGPT_PLAN_ENV_KEY] ?? null,
-    );
-
-    return account ? `signed in as ${account}` : "signed in with ChatGPT";
-  }
-
-  return isCredentialConfigured(provider)
-    ? "available from environment"
-    : `save ${getProviderApiKeyEnvKey(provider)} to ${openWikiEnvPath}`;
 }
 
 /**
@@ -3408,10 +3327,6 @@ function getProviderSetupDetail(provider: OpenWikiProvider): string {
   return `default ${getProviderLabel(DEFAULT_PROVIDER)}`;
 }
 
-function hasValidConfiguredProvider(): boolean {
-  return normalizeProvider(process.env[OPENWIKI_PROVIDER_ENV_KEY]) !== null;
-}
-
 function getModelSetupDetail(
   modelIdOverride: string | null,
   provider: OpenWikiProvider,
@@ -3700,31 +3615,6 @@ function sanitizeCronInputChunk(value: string): string {
 
 function sanitizeRepoId(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/gu, "-").slice(0, 80) || "repo";
-}
-
-function getDefaultLocalGitRepoPath(): string {
-  return process.cwd();
-}
-
-function getDefaultCodeRepoRootPath(): string {
-  return findNearestGitRepoRoot(process.cwd()) ?? process.cwd();
-}
-
-export function findNearestGitRepoRoot(startPath: string): string | null {
-  let currentPath = path.resolve(startPath);
-
-  while (true) {
-    if (existsSync(path.join(currentPath, ".git"))) {
-      return currentPath;
-    }
-
-    const parentPath = path.dirname(currentPath);
-    if (parentPath === currentPath) {
-      return null;
-    }
-
-    currentPath = parentPath;
-  }
 }
 
 async function validateLocalDirectoryPath(value: string): Promise<string> {
