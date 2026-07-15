@@ -88,6 +88,9 @@ Planning discipline:
 - Before completing the run, delete ${output.planPath}. If there is no filesystem delete tool, use shell execute from the runtime root, for example ${output.removePlanCommand}.
 - Do not leave ${output.planPath} in the final wiki.
 
+Index discipline:
+- Directory index.md files are generated deterministically after the run. Do not create or edit them yourself.
+
 Git discipline:
 - Use git heavily where it helps explain why code exists, not just what code exists.
 - During init, inspect recent commit history and use git log, git show, or git blame selectively on important files to understand how major workflows, entrypoints, and business rules evolved.

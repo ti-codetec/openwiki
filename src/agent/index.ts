@@ -24,6 +24,7 @@ import { isFileNotFoundError } from "../fs-errors.js";
 import { SECRET_KEY_PATTERN_SOURCE } from "../diagnostics.js";
 import { openWikiLocalWikiDir, openWikiSkillsDir } from "../openwiki-home.js";
 import { OpenWikiLocalShellBackend } from "./docs-only-backend.js";
+import { createOpenWikiIndexMiddleware } from "./index-middleware.js";
 import {
   CODEX_ORIGINATOR,
   CODEX_RESPONSES_BASE_URL,
@@ -214,6 +215,10 @@ async function runOpenWikiAgentCore(
     tools: createOpenWikiConnectorTools(),
     checkpointer,
     backend,
+    middleware:
+      command === "chat"
+        ? []
+        : [createOpenWikiIndexMiddleware(wikiBackend, outputMode)],
     skills: ["/skills/"],
     permissions: [
       { operations: ["write"], paths: ["/skills/**"], mode: "deny" },

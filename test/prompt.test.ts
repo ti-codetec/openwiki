@@ -87,3 +87,15 @@ describe("OKF front matter guidance", () => {
     );
   });
 });
+describe("index finalization guidance", () => {
+  test("tells the agent that indexes are generated automatically", () => {
+    for (const outputMode of ["local-wiki", "repository"] as const) {
+      const prompt = createSystemPrompt("update", outputMode);
+
+      expect(prompt).toContain(
+        "Directory index.md files are generated deterministically after the run",
+      );
+      expect(prompt).toContain("Do not create or edit them yourself");
+    }
+  });
+});
