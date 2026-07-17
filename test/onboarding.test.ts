@@ -1,7 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { parse } from "yaml";
+import { validateOkfFrontmatter } from "../src/agent/frontmatter-validator.ts";
 
 const originalHome = process.env.HOME;
 const tempHomes: string[] = [];
@@ -109,12 +111,99 @@ describe("OpenWiki onboarding instructions", () => {
         "Shared repository brief.",
       );
 
-      await expect(
-        readFile(onboarding.getRepositoryWikiInstructionsPath(repo), "utf8"),
-      ).resolves.toBe("Shared repository brief.\n");
+      const instructions = await readFile(
+        onboarding.getRepositoryWikiInstructionsPath(repo),
+        "utf8",
+      );
+      expect(instructions).toMatch(/^---\ntype: Repository guide\n/u);
+      expect(instructions).toContain('openwiki_instructions: "1"\n');
+      expect(instructions).toContain("title: Repository Wiki Instructions\n");
+      expect(instructions).toContain("\n---\n\nShared repository brief.\n");
+      expect(validateOkfFrontmatter(instructions)).toEqual({ valid: true });
       await expect(
         onboarding.readRepositoryWikiInstructions(repo),
-      ).resolves.toBe("Shared repository brief.");
+      ).resolves.toBe("Shared repository brief.\n");
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test.each([
+    "---\n\nFocus on public APIs.\n",
+    "---\n\n---\nFocus on public APIs.\n",
+  ])("does not strip legacy thematic-break instructions", async (body) => {
+    const home = await createTempHome();
+    const repo = await mkdtemp(path.join(tmpdir(), "openwiki-repo-"));
+    const onboarding = await loadOnboardingModule(home);
+
+    try {
+      const instructionsPath =
+        onboarding.getRepositoryWikiInstructionsPath(repo);
+      await mkdir(path.dirname(instructionsPath), { recursive: true });
+      await writeFile(instructionsPath, body, "utf8");
+
+      await expect(
+        onboarding.readRepositoryWikiInstructions(repo),
+      ).resolves.toBe(body);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("treats parseable unmarked YAML at the start as legacy body byte for byte", async () => {
+    const home = await createTempHome();
+    const repo = await mkdtemp(path.join(tmpdir(), "openwiki-repo-"));
+    const onboarding = await loadOnboardingModule(home);
+    const body =
+      "---\ntype: User-authored example\ncustom: true\n---\n\nKeep this entire block.\n";
+    try {
+      const instructionsPath =
+        onboarding.getRepositoryWikiInstructionsPath(repo);
+      await mkdir(path.dirname(instructionsPath), { recursive: true });
+      await writeFile(instructionsPath, body, "utf8");
+
+      await expect(
+        onboarding.readRepositoryWikiInstructions(repo),
+      ).resolves.toBe(body);
+      const migrated = onboarding.addRepositoryInstructionsFrontmatter(body);
+      expect(migrated.endsWith(body)).toBe(true);
+      expect(onboarding.isOpenWikiInstructionsDocument(migrated)).toBe(true);
+      expect(onboarding.isOpenWikiInstructionsDocument(body)).toBe(false);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("preserves unknown scalar, list, and mapping extensions when saving instructions", async () => {
+    const home = await createTempHome();
+    const repo = await mkdtemp(path.join(tmpdir(), "openwiki-repo-"));
+    const onboarding = await loadOnboardingModule(home);
+    try {
+      await onboarding.saveRepositoryWikiInstructions(repo, "Initial brief.");
+      const instructionsPath =
+        onboarding.getRepositoryWikiInstructionsPath(repo);
+      const current = await readFile(instructionsPath, "utf8");
+      await writeFile(
+        instructionsPath,
+        current.replace(
+          'openwiki_instructions: "1"\n',
+          'openwiki_instructions: "1"\nconfidence: 0.75\nowners: [docs, platform]\nproducer:\n  name: catalog\n  enabled: true\n',
+        ),
+        "utf8",
+      );
+
+      await onboarding.saveRepositoryWikiInstructions(repo, "Updated brief.");
+
+      const saved = await readFile(instructionsPath, "utf8");
+      const frontmatter = /^---\n([\s\S]*?)\n---/u.exec(saved)?.[1];
+      expect(parse(frontmatter ?? "")).toMatchObject({
+        confidence: 0.75,
+        owners: ["docs", "platform"],
+        producer: { enabled: true, name: "catalog" },
+      });
+      await expect(
+        onboarding.readRepositoryWikiInstructions(repo),
+      ).resolves.toBe("Updated brief.\n");
     } finally {
       await rm(repo, { force: true, recursive: true });
     }

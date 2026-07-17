@@ -250,10 +250,7 @@ async function runOpenWikiAgentCore(
     tools: createOpenWikiConnectorTools(),
     checkpointer,
     backend,
-    middleware:
-      command === "chat"
-        ? []
-        : [createOpenWikiIndexMiddleware(wikiBackend, outputMode)],
+    middleware: createRunMiddleware(command, wikiBackend, outputMode),
     skills: ["/skills/"],
     permissions: [
       { operations: ["write"], paths: ["/skills/**"], mode: "deny" },
@@ -351,6 +348,15 @@ async function runOpenWikiAgentCore(
     command,
     model: modelId,
   };
+}
+
+/** Applies final OKF validation/index synchronization to init, update, and chat. */
+export function createRunMiddleware(
+  _command: OpenWikiCommand,
+  backend: OpenWikiLocalShellBackend,
+  outputMode: OpenWikiOutputMode,
+) {
+  return [createOpenWikiIndexMiddleware(backend, outputMode)];
 }
 
 const checkpointPath = path.join(openWikiEnvDir, "openwiki.sqlite");

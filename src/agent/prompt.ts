@@ -92,6 +92,8 @@ Planning discipline:
 
 Index discipline:
 - Directory index.md files are generated deterministically after the run. Do not create or edit them yourself.
+- Markdown concepts in hidden directories are still validated. OpenWiki does not create or rewrite indexes inside hidden directories, so editor/tool control data is not modified.
+- Final synchronization rejects symlinks and portable case-insensitive collisions with reserved names, and fails closed on listing, read, validation, or write errors; chat documentation mutations are validated and synchronized by the same fail-closed path as init/update runs.
 
 Git discipline:
 - Use git heavily where it helps explain why code exists, not just what code exists.
@@ -151,24 +153,28 @@ OKF relationship modeling:
 - Prefer links to existing canonical concepts over duplicating their explanations. Do not mint thin concepts merely to create more nodes or edges.
 
 Front matter requirements (OKF):
-- Every Markdown file you create or update under ${output.docsLocation}, including the temporary ${output.planPath} file, MUST begin with OKF-compliant YAML front matter.
-- The front matter MUST follow the Google Knowledge Catalog OKF schema
-- Use this exact formatter at the very beginning of each file, replacing placeholders with real values and omitting optional fields that do not apply:
+- Every non-reserved concept Markdown file you create or update under ${output.docsLocation}, including the temporary ${output.planPath} file, MUST begin with OKF-compliant YAML front matter.
+- Reserved \`index.md\` and \`log.md\` files do not require concept front matter. Directory indexes are generated after the run; do not edit them.
+- When creating or editing \`log.md\`, begin with \`# Directory Update Log\`, use \`## YYYY-MM-DD\` date groups in newest-first order, and include at least one list entry with non-empty textual content per date.
+- The front matter MUST follow the Google Knowledge Catalog OKF v0.1 schema.
+- Use this baseline formatter at the very beginning of each concept file, replacing placeholders with real values and omitting optional fields that do not apply:
 
 <okf_front_matter>
 ---
 type: <Type name>                  # REQUIRED
 title: <Optional display name>
-description: <Optional one to two sentence summary (optimized for search & retrieval)>
+description: <Optional one-line summary (optimized for search & retrieval)>
 resource: <Optional canonical URI for the underlying asset>
 tags: [<tag>, <tag>, …]            # Optional
+timestamp: <Optional ISO 8601 last-modified datetime>
+# Producer-defined extension fields are allowed
 ---
 </okf_front_matter>
 
-- \`type\` is required. Choose a short, descriptive, self-explanatory concept kind, such as \`BigQuery Table\`, \`BigQuery Dataset\`, \`API Endpoint\`, \`Metric\`, \`Playbook\`, or \`Reference\`. Type values are not centrally registered, so do not restrict them to a fixed list.
-- Required fields are: \`title\`, a human-readable display name; \`description\`, a one to two sentence summary (this should be optimized for search & retrieval); and \`tags\`, a YAML list of short cross-cutting category strings.
-- Recommended field(s), in priority order, are: \`resource\`, the canonical URI of the underlying asset when one exists (e.g. file path to specific code file in a repo).
-- Produce valid YAML. Do not leave placeholder text or explanatory comments in written files, and do not add front matter fields outside the formatter above.
+- Only \`type\` is required by OKF v0.1. Choose a short, descriptive, self-explanatory concept kind, such as \`BigQuery Table\`, \`BigQuery Dataset\`, \`API Endpoint\`, \`Metric\`, \`Playbook\`, or \`Reference\`. Type values are not centrally registered, so do not restrict them to a fixed list.
+- \`title\`, \`description\`, \`resource\`, \`tags\`, and \`timestamp\` are recommended when applicable. Use \`title\` as the human-readable display name, \`description\` as a one-line retrieval-optimized summary, \`resource\` as the canonical URI of an underlying asset, \`tags\` as a YAML list of short category strings, and \`timestamp\` as the ISO 8601 datetime of the last meaningful change; the timezone is optional under OKF v0.1.
+- Produce valid YAML and do not leave placeholder text or explanatory comments in written files.
+- Preserve producer-defined front matter fields that you do not recognize when updating existing documents. OKF consumers must tolerate extensions, so never delete or reject an unknown field solely because OpenWiki did not create it.
 - The description field here is very important as retrieval tools will rely on it when searching through documents. Ensure your descriptions are clear, detailed, and optimized for search.
 - When updating an existing Markdown file, preserve accurate content but add or correct its opening front matter as part of that update so the resulting file complies with this requirement. - Only update front matter when necessary. You do not need to update every time, only when key file components change.
 
@@ -442,8 +448,8 @@ function getOutputPromptConfig(
     rootAgentInstructions: `Root agent instruction files:
 - Do not create or update repository /AGENTS.md or /CLAUDE.md files during normal code wiki runs.
 - Keep generated wiki content under the repository /openwiki directory.
-- /openwiki/INSTRUCTIONS.md is the shared, user-authored OpenWiki brief for this repository. Treat it as control metadata: read it to understand scope and priorities, but do not edit it during normal init/update/chat runs unless the user explicitly asks to change the brief.
-- Generated documentation pages should live under /openwiki, but /openwiki/INSTRUCTIONS.md itself is not generated documentation and should not be rewritten as part of routine wiki maintenance.
+- The root /openwiki/INSTRUCTIONS.md is the shared, user-authored OpenWiki brief for this repository. Treat it as control metadata: read it to understand scope and priorities, but do not edit its body during normal init/update/chat runs unless the user explicitly asks to change the brief.
+- Final synchronization may wrap an unmarked legacy root /openwiki/INSTRUCTIONS.md in producer-marked OKF front matter exactly once, preserving the complete legacy body byte for byte. Only a file with OpenWiki's producer marker is read as generated metadata plus body; all unmarked files are legacy body. Nested and personal INSTRUCTIONS.md files are ordinary concepts and are never specially migrated.
 - If repository agent instructions already reference OpenWiki, keep those references accurate but do not edit them unless explicitly asked.`,
     searchBoundaryInstruction:
       "Do not run broad commands that search outside the target repository.",

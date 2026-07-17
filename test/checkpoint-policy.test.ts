@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { resolveCheckpointTarget } from "../src/agent/index.ts";
+import {
+  createRunMiddleware,
+  resolveCheckpointTarget,
+} from "../src/agent/index.ts";
 
 describe("checkpoint persistence policy", () => {
   test("keeps chat checkpoints in the persistent OpenWiki database", () => {
@@ -20,4 +23,10 @@ describe("checkpoint persistence policy", () => {
       });
     },
   );
+
+  test("applies fail-closed OKF middleware to chat runs too", () => {
+    const backend = {} as Parameters<typeof createRunMiddleware>[1];
+
+    expect(createRunMiddleware("chat", backend, "repository")).toHaveLength(1);
+  });
 });

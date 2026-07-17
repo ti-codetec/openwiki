@@ -49,6 +49,46 @@ Bare `openwiki --init` and `openwiki --update` run in code mode. Use
 `openwiki personal --init` or `openwiki personal --update` for the local
 personal brain wiki.
 
+## Open Knowledge Format compatibility
+
+Generated wikis follow the Google Knowledge Catalog
+[Open Knowledge Format (OKF) v0.1 draft](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md):
+
+- Every concept Markdown file has YAML front matter with the required `type`.
+- Recommended `title`, `description`, `resource`, `tags`, and `timestamp` fields
+  are used when applicable. `description` is a one-line summary; timestamps are
+  ISO 8601 datetimes and do not need a timezone.
+- Producer-defined extension fields are accepted, and agent guidance requires
+  preserving them during updates.
+- The bundle-root `index.md` declares `okf_version: "0.1"`; nested `index.md`
+  files are generated without front matter for progressive disclosure, and
+  `log.md` is treated as a reserved history file.
+- Final synchronization validates strict date-grouped, newest-first, flat-list
+  `log.md` structure with non-empty textual content in every list item; it
+  ignores apparent structure in code or comments and rejects extra headings,
+  nested lists, and out-of-format content.
+- Synchronization fails closed on listing/read/write errors, symlinks (including
+  cycles and parents that resolve outside the wiki), portable case-insensitive
+  reserved-name collisions, invalid documents, and leftover temporary plans.
+  Only a root proven absent is treated as an empty optional repository wiki.
+- Markdown concepts in hidden directories are validated, but OpenWiki never
+  creates or rewrites indexes inside dot-directories; `.git` is treated as an
+  operational control directory. Generated index metadata is collapsed to one
+  line and sorted by code units, independent of locale.
+- Repository `INSTRUCTIONS.md` control metadata is stored as a conformant OKF
+  concept with an OpenWiki producer marker while OpenWiki exposes only its body.
+  Every unmarked root `openwiki/INSTRUCTIONS.md`—even one beginning with
+  parseable YAML—is legacy body and is wrapped exactly once without changing a
+  byte. Unknown scalar/list/map extensions survive later saves. This special
+  migration applies only to the repository bundle root, never nested or personal
+  `INSTRUCTIONS.md` files.
+- Init, update, and chat runs all use the same final validation and index
+  synchronization, so documentation mutations requested in chat fail closed too.
+- Standard Markdown links between concepts express directed relationships.
+
+The bundle directory does not need to be named `.okf`; repository wikis use
+`openwiki/`, while personal wikis use `~/.openwiki/wiki/`.
+
 Then to ensure your documentation stays up-to-date, add the CI workflow for your Git provider to automatically open a PR or merge request with documentation updates:
 
 - GitHub Actions: copy [openwiki-update.yml](./examples/openwiki-update.yml) into `.github/workflows/openwiki-update.yml`.
@@ -163,8 +203,10 @@ On each `code` run, `openwiki` maintains both an `AGENTS.md` and a `CLAUDE.md` a
 Repository-specific wiki instructions are stored separately in
 `openwiki/INSTRUCTIONS.md`. This file is a shared, user-authored brief for the
 repository wiki: OpenWiki reads it for scope and priorities, but it is not
-generated documentation and is not rewritten during normal init, update, or chat
-runs unless you explicitly ask to change the brief.
+generated documentation and its body is not rewritten during normal init, update,
+or chat runs unless you explicitly ask to change the brief. Final synchronization
+may add producer-marked OKF front matter once to an unmarked legacy root file,
+preserving its complete prior bytes as the body.
 
 On the first interactive run, OpenWiki will have you configure your inference provider, API key, and LLM. You will also be able to set a LangSmith API key to trace your OpenWiki runs to a LangSmith tracing project named "openwiki" (optional).
 

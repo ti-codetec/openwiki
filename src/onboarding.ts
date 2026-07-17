@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { parse, stringify } from "yaml";
 import { OPEN_WIKI_DIR } from "./constants.js";
 import { ensureOpenWikiHome, openWikiHomeDir } from "./openwiki-home.js";
 import type { ConnectorId } from "./connectors/types.js";
@@ -14,6 +15,21 @@ export const openWikiInstructionsPath = path.join(
   "INSTRUCTIONS.md",
 );
 export const REPOSITORY_INSTRUCTIONS_FILE = "INSTRUCTIONS.md";
+const REPOSITORY_INSTRUCTIONS_FRONTMATTER = `---
+type: Repository guide
+title: Repository Wiki Instructions
+description: Shared, user-authored guidance for creating and maintaining this repository's OpenWiki documentation.
+tags: [documentation, repository, code-wiki]
+openwiki_instructions: "1"
+---`;
+const REPOSITORY_INSTRUCTIONS_MARKER = "openwiki_instructions";
+const REPOSITORY_INSTRUCTIONS_STANDARD_FIELDS = new Set([
+  "type",
+  "title",
+  "description",
+  "tags",
+  REPOSITORY_INSTRUCTIONS_MARKER,
+]);
 
 export type OnboardingSourceScheduleConfig = {
   description: string;
@@ -128,9 +144,9 @@ export async function readRepositoryWikiInstructions(
   repoRoot: string,
 ): Promise<string | undefined> {
   try {
-    const content = (
-      await readFile(getRepositoryWikiInstructionsPath(repoRoot), "utf8")
-    ).trim();
+    const content = extractRepositoryInstructionsBody(
+      await readFile(getRepositoryWikiInstructionsPath(repoRoot), "utf8"),
+    );
     return content.length > 0 ? content : undefined;
   } catch (error) {
     if (isFileNotFoundError(error)) {
@@ -150,7 +166,9 @@ function readRepositoryWikiInstructionsSync(
     return undefined;
   }
 
-  const content = readFileSync(instructionsPath, "utf8").trim();
+  const content = extractRepositoryInstructionsBody(
+    readFileSync(instructionsPath, "utf8"),
+  );
   return content.length > 0 ? content : undefined;
 }
 
@@ -160,10 +178,86 @@ export async function saveRepositoryWikiInstructions(
 ): Promise<void> {
   const instructionsPath = getRepositoryWikiInstructionsPath(repoRoot);
   await mkdir(path.dirname(instructionsPath), { recursive: true });
-  await writeFile(instructionsPath, `${wikiGoal.trim()}\n`, {
-    encoding: "utf8",
-    mode: 0o644,
-  });
+  const extensions =
+    await readRepositoryInstructionsExtensions(instructionsPath);
+  await writeFile(
+    instructionsPath,
+    addRepositoryInstructionsFrontmatter(`${wikiGoal.trim()}\n`, extensions),
+    {
+      encoding: "utf8",
+      mode: 0o644,
+    },
+  );
+}
+
+export function addRepositoryInstructionsFrontmatter(
+  content: string,
+  extensions: Record<string, unknown> = {},
+): string {
+  const extensionYaml =
+    Object.keys(extensions).length > 0
+      ? stringify(extensions, { lineWidth: 0 }).trimEnd()
+      : "";
+  const frontmatter = extensionYaml
+    ? REPOSITORY_INSTRUCTIONS_FRONTMATTER.replace(
+        /\n---$/u,
+        `\n${extensionYaml}\n---`,
+      )
+    : REPOSITORY_INSTRUCTIONS_FRONTMATTER;
+  return `${frontmatter}\n\n${content}`;
+}
+
+export function isOpenWikiInstructionsDocument(content: string): boolean {
+  return parseRepositoryInstructionsFrontmatter(content) !== undefined;
+}
+
+function extractRepositoryInstructionsBody(content: string): string {
+  const produced = parseRepositoryInstructionsFrontmatter(content);
+  if (!produced) return content;
+  const body = content.slice(produced.match[0].length);
+  return body.replace(/^\r?\n/u, "");
+}
+
+function parseRepositoryInstructionsFrontmatter(content: string):
+  | {
+      fields: Record<string, unknown>;
+      match: RegExpExecArray;
+    }
+  | undefined {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(content);
+  if (!match) return undefined;
+
+  try {
+    const fields = parse(`\n${match[1]}`, {
+      maxAliasCount: 100,
+      schema: "core",
+      uniqueKeys: true,
+    }) as unknown;
+    return isObject(fields) && fields[REPOSITORY_INSTRUCTIONS_MARKER] === "1"
+      ? { fields, match }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readRepositoryInstructionsExtensions(
+  instructionsPath: string,
+): Promise<Record<string, unknown>> {
+  try {
+    const parsed = parseRepositoryInstructionsFrontmatter(
+      await readFile(instructionsPath, "utf8"),
+    );
+    if (!parsed) return {};
+    return Object.fromEntries(
+      Object.entries(parsed.fields).filter(
+        ([key]) => !REPOSITORY_INSTRUCTIONS_STANDARD_FIELDS.has(key),
+      ),
+    );
+  } catch (error) {
+    if (isFileNotFoundError(error)) return {};
+    throw error;
+  }
 }
 
 export function isOnboardingComplete(

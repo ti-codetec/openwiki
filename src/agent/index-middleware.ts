@@ -2,11 +2,30 @@ import type { BackendProtocolV2, FileInfo } from "deepagents";
 import { createMiddleware } from "langchain";
 import path from "node:path";
 import { parse } from "yaml";
-import { addFrontmatterWarning } from "./frontmatter-validator.js";
+import {
+  addRepositoryInstructionsFrontmatter,
+  isOpenWikiInstructionsDocument,
+  REPOSITORY_INSTRUCTIONS_FILE,
+} from "../onboarding.js";
+import {
+  addFrontmatterWarning,
+  type FrontmatterValidation,
+  validateOkfFrontmatter,
+  validateOkfIndex,
+  validateOkfLog,
+} from "./frontmatter-validator.js";
 import type { OpenWikiOutputMode } from "./types.js";
 
 const INDEX_FILE = "index.md";
-const EXCLUDED_FILES = new Set([INDEX_FILE, "_plan.md", "INSTRUCTIONS.md"]);
+const IGNORED_DIRECTORY = ".git";
+const LOG_FILE = "log.md";
+const PLAN_FILE = "_plan.md";
+const PORTABLE_RESERVED_NAMES = new Map([
+  [INDEX_FILE, INDEX_FILE],
+  [LOG_FILE, LOG_FILE],
+  [PLAN_FILE, PLAN_FILE],
+  [IGNORED_DIRECTORY, IGNORED_DIRECTORY],
+]);
 
 interface Directory {
   entries: FileInfo[];
@@ -17,8 +36,16 @@ interface Link {
   href: string;
   label: string;
 }
+interface PendingWrite {
+  content: string;
+  existing: string | null;
+  path: string;
+  purpose: string;
+}
 
-/** Creates middleware that synchronizes deterministic wiki indexes after a run. */
+type SafeListing = { error?: string; files?: FileInfo[]; missing?: boolean };
+
+/** Creates middleware that validates writes and synchronizes deterministic indexes after a run. */
 export function createOpenWikiIndexMiddleware(
   backend: BackendProtocolV2,
   outputMode: OpenWikiOutputMode,
@@ -38,73 +65,157 @@ export function createOpenWikiIndexMiddleware(
   });
 }
 
-/** Synchronizes the index for every directory in the configured wiki. */
+/** Validates the complete wiki, then applies migrations and deterministic indexes. */
 export async function synchronizeWikiIndexes(
   backend: BackendProtocolV2,
   outputMode: OpenWikiOutputMode,
 ): Promise<void> {
   const root = outputMode === "local-wiki" ? "/" : "/openwiki";
-  for (const directory of await collectDirectories(backend, root, true)) {
-    await synchronizeDirectory(backend, directory, root);
+  const directories = await collectDirectories(backend, root, true);
+  const writes: PendingWrite[] = [];
+  for (const directory of directories) {
+    writes.push(
+      ...(await prepareDirectory(backend, directory, root, outputMode)),
+    );
+  }
+  for (const write of writes) {
+    const result =
+      write.existing === null
+        ? await backend.write(write.path, write.content)
+        : await backend.edit(write.path, write.existing, write.content);
+    if (result.error) {
+      throw new Error(
+        `Unable to ${write.purpose} ${write.path}: ${result.error}`,
+      );
+    }
   }
 }
 
-/** Recursively collects visible wiki directories and their entries. */
+/** Recursively collects wiki directories while rejecting unsafe portable names. */
 async function collectDirectories(
   backend: BackendProtocolV2,
   directoryPath: string,
   allowMissing = false,
 ): Promise<Directory[]> {
-  const result = await backend.ls(directoryPath);
-  if (result.error) {
+  const result = await listSafely(backend, directoryPath);
+  if (result.missing) {
     if (allowMissing) return [];
+    throw new Error(`Unable to list ${directoryPath}: path does not exist.`);
+  }
+  if (result.error) {
     throw new Error(`Unable to list ${directoryPath}: ${result.error}`);
   }
 
   const entries = result.files ?? [];
+  assertNoPortableReservedCollisions(directoryPath, entries);
   const children = entries.filter(
-    (entry) => entry.is_dir && !entryName(entry).startsWith("."),
+    (entry) => entry.is_dir && entryName(entry) !== IGNORED_DIRECTORY,
   );
   const descendants = await Promise.all(
-    children.map((entry) =>
-      collectDirectories(
-        backend,
-        path.posix.join(directoryPath, entryName(entry)),
-      ),
-    ),
+    children.map((entry) => {
+      const name = entryName(entry);
+      return collectDirectories(backend, path.posix.join(directoryPath, name));
+    }),
   );
-  return [...descendants.flat(), { entries, path: directoryPath }];
+  return [
+    ...descendants.flat(),
+    {
+      entries,
+      path: directoryPath,
+    },
+  ];
 }
 
-/** Builds and writes one directory's index when its content has changed. */
-async function synchronizeDirectory(
+async function listSafely(
+  backend: BackendProtocolV2,
+  directoryPath: string,
+): Promise<SafeListing> {
+  const safeBackend = backend as BackendProtocolV2 & {
+    safeLs?: (path: string) => Promise<SafeListing>;
+  };
+  return safeBackend.safeLs
+    ? safeBackend.safeLs(directoryPath)
+    : backend.ls(directoryPath);
+}
+
+function assertNoPortableReservedCollisions(
+  directoryPath: string,
+  entries: FileInfo[],
+): void {
+  for (const entry of entries) {
+    const name = entryName(entry);
+    const canonical = PORTABLE_RESERVED_NAMES.get(name.toLowerCase());
+    if (canonical && name !== canonical) {
+      throw new Error(
+        `Portable case-insensitive reserved-name collision in ${directoryPath}: ${name} conflicts with ${canonical}.`,
+      );
+    }
+  }
+}
+
+/** Validates one directory and prepares, but does not perform, its writes. */
+async function prepareDirectory(
   backend: BackendProtocolV2,
   directory: Directory,
   root: string,
-): Promise<void> {
+  outputMode: OpenWikiOutputMode,
+): Promise<PendingWrite[]> {
   const files: Link[] = [];
   const directories: Link[] = [];
+  const writes: PendingWrite[] = [];
+  const hiddenDirectory = isHiddenDirectory(directory.path, root);
 
   for (const entry of directory.entries) {
     const name = entryName(entry);
-    if (!name || name.startsWith(".")) continue;
+    if (!name) continue;
 
     if (entry.is_dir) {
+      if (name === IGNORED_DIRECTORY) continue;
       directories.push({ href: `${encodeURIComponent(name)}/`, label: name });
       continue;
     }
-    if (
-      path.posix.extname(name).toLowerCase() !== ".md" ||
-      EXCLUDED_FILES.has(name)
-    ) {
-      continue;
-    }
+    if (path.posix.extname(name).toLowerCase() !== ".md") continue;
 
     const filePath = path.posix.join(directory.path, name);
-    const metadata = parseFrontmatter(
-      await readText(backend, filePath),
-      filePath,
-    );
+    if (name === INDEX_FILE) {
+      if (hiddenDirectory) {
+        assertValidOkf(
+          filePath,
+          validateOkfIndex(await readText(backend, filePath)),
+        );
+      }
+      continue;
+    }
+    if (name === PLAN_FILE) {
+      throw new Error(
+        `Temporary plan ${filePath} must be removed before completion.`,
+      );
+    }
+
+    let content = await readText(backend, filePath);
+    if (name === LOG_FILE) {
+      assertValidOkf(filePath, validateOkfLog(content));
+      continue;
+    }
+    const isRootRepositoryInstructions =
+      outputMode === "repository" &&
+      directory.path === root &&
+      name === REPOSITORY_INSTRUCTIONS_FILE;
+    if (
+      isRootRepositoryInstructions &&
+      !isOpenWikiInstructionsDocument(content)
+    ) {
+      const migrated = addRepositoryInstructionsFrontmatter(content);
+      writes.push({
+        content: migrated,
+        existing: content,
+        path: filePath,
+        purpose: "migrate legacy instructions",
+      });
+      content = migrated;
+    }
+    const metadata = parseFrontmatter(content, filePath);
+    assertValidOkf(filePath, validateOkfFrontmatter(content));
     files.push({
       description: metadata.description,
       href: encodeURIComponent(name),
@@ -112,32 +223,55 @@ async function synchronizeDirectory(
     });
   }
 
+  if (hiddenDirectory) return writes;
+
   const indexPath = path.posix.join(directory.path, INDEX_FILE);
-  const title =
-    directory.path === root
-      ? "OpenWiki"
-      : titleFromSlug(path.posix.basename(directory.path));
-  const content = renderIndex(title, files, directories);
+  const content = renderIndex(files, directories, directory.path === root);
   const existing = directory.entries.some(
     (entry) => !entry.is_dir && entryName(entry) === INDEX_FILE,
   )
     ? await readText(backend, indexPath)
     : null;
-  if (existing === content) return;
-
-  const result = existing
-    ? await backend.edit(indexPath, existing, content)
-    : await backend.write(indexPath, content);
-  if (result.error) {
-    throw new Error(`Unable to write ${indexPath}: ${result.error}`);
+  if (existing !== content) {
+    writes.push({
+      content,
+      existing,
+      path: indexPath,
+      purpose: existing === null ? "write" : "update",
+    });
   }
+  return writes;
+}
+
+function isHiddenDirectory(directoryPath: string, root: string): boolean {
+  if (directoryPath === root) return false;
+  return directoryPath
+    .slice(root.length)
+    .split("/")
+    .filter(Boolean)
+    .some((segment) => segment.startsWith("."));
+}
+
+/** Throws an actionable final-bundle error for invalid OKF content. */
+function assertValidOkf(
+  filePath: string,
+  validation: FrontmatterValidation,
+): void {
+  if (validation.valid) return;
+  const details = validation.issues
+    .map(
+      ({ code, line, message }) =>
+        `[${code}]${line ? ` line ${line}:` : ""} ${message}`,
+    )
+    .join("; ");
+  throw new Error(`${filePath} is not valid OKF: ${details}`);
 }
 
 /** Renders a complete deterministic index document. */
 function renderIndex(
-  title: string,
   files: Link[],
   directories: Link[],
+  isBundleRoot: boolean,
 ): string {
   const sections = [
     renderLinks("Files", files, true),
@@ -145,21 +279,23 @@ function renderIndex(
   ]
     .filter(Boolean)
     .join("\n\n");
-  return `---\ntype: Documentation Index\ntitle: ${JSON.stringify(title)}\ndescription: ${JSON.stringify(`Files and subdirectories in ${title}.`)}\n---\n\n${sections}\n`;
+  const body = sections || "# Files";
+  const version = isBundleRoot ? '---\nokf_version: "0.1"\n---\n\n' : "";
+  return `${version}${body}\n`;
 }
 
-/** Renders a sorted Markdown section for files or subdirectories. */
+/** Renders a code-unit-sorted Markdown section. */
 function renderLinks(
   heading: string,
   links: Link[],
   includeDescription: boolean,
 ): string {
   if (links.length === 0) return "";
-  links.sort((left, right) => left.href.localeCompare(right.href));
+  links.sort((left, right) => compareCodeUnits(left.href, right.href));
   const items = links.map(({ description, href, label }) => {
-    const link = `- [${escapeLabel(label)}](${href})`;
+    const link = `- [${escapeLabel(normalizeInline(label))}](${href})`;
     return includeDescription && description
-      ? `${link} - ${description}`
+      ? `${link} - ${normalizeInline(description)}`
       : link;
   });
   return `# ${heading}\n\n${items.join("\n")}`;
@@ -206,23 +342,23 @@ function parseFrontmatter(
   };
 }
 
-/** Converts an unknown thrown value into a readable message. */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /** Reads a text file from the backend or throws an actionable error. */
 async function readText(
   backend: BackendProtocolV2,
   filePath: string,
 ): Promise<string> {
-  const result = await backend.readRaw(filePath);
-  if (result.error)
-    throw new Error(`Unable to read ${filePath}: ${result.error}`);
-  return fileDataToText(result.data?.content, filePath);
+  try {
+    const result = await backend.readRaw(filePath);
+    if (result.error)
+      throw new Error(`Unable to read ${filePath}: ${result.error}`);
+    return fileDataToText(result.data?.content, filePath);
+  } catch (error) {
+    throw new Error(`Unable to read ${filePath}: ${errorMessage(error)}`, {
+      cause: error,
+    });
+  }
 }
 
-/** Converts supported backend file content into text. */
 function fileDataToText(
   content: string | string[] | Uint8Array | undefined,
   filePath: string,
@@ -232,24 +368,25 @@ function fileDataToText(
   throw new Error(`${filePath} is not a text file.`);
 }
 
-/** Extracts an entry's basename from its virtual path. */
 function entryName(entry: FileInfo): string {
   return path.posix.basename(entry.path.replace(/\/$/u, ""));
 }
 
-/** Converts a directory slug into a human-readable title. */
-function titleFromSlug(slug: string): string {
-  return slug
-    .split(/[-_\s]+/u)
-    .filter(Boolean)
-    .map((word) => word[0].toUpperCase() + word.slice(1))
-    .join(" ");
+function normalizeInline(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
 }
 
-/** Escapes a value for use as a Markdown link label. */
 function escapeLabel(value: string): string {
   return value
     .replaceAll("\\", "\\\\")
     .replaceAll("[", "\\[")
     .replaceAll("]", "\\]");
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
